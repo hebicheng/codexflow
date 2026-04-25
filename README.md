@@ -94,6 +94,12 @@ Client Apps
 - `Flutter Web (Chrome)`
 - `Flutter Android`（MuMu 模拟器）
 
+## 发布产物
+
+- Android 安装包已经发布在 GitHub Releases
+- Web 构建产物也已经发布在 GitHub Releases
+- 如果你只是想直接试用，可以优先从 GitHub Releases 下载对应版本
+
 ## 当前状态
 
 项目已经能跑通真实链路：
@@ -238,7 +244,42 @@ flutter run -d chrome
 flutter run -d emulator-5554
 ```
 
-### 7. 在 App 里配置 Agent 地址
+### 7. 运行 Web 版本
+
+先构建 Web（已上传到release，可以直接下载使用）：
+
+```bash
+cd flutter/codexflow
+flutter build web --release
+```
+
+构建产物目录：
+
+```text
+flutter/codexflow/build/web
+```
+
+本地运行最推荐直接用 Python：
+
+```bash
+cd flutter/codexflow/build/web
+python3 -m http.server 8080
+```
+
+然后浏览器打开：
+
+```text
+http://127.0.0.1:8080
+```
+
+其他方式也可以，例如：
+
+- `npx serve build/web`
+- `busybox httpd`
+- `Nginx / Caddy / Apache`
+- 任意静态站点托管服务
+
+### 8. 在 App 里配置 Agent 地址
 
 如果是同一台 Mac 上跑模拟器：
 
@@ -338,6 +379,15 @@ assets                    README 截图资源
   <tr>
     <td><img src="assets/screenshot_android_01.png" alt="Android Screenshot 01" width="240"></td>
     <td><img src="assets/screenshot_android_02.png" alt="Android Screenshot 02" width="240"></td>
+  </tr>
+</table>
+
+### Web
+
+<table>
+  <tr>
+    <td><img src="assets/screenshot_web_01.png" alt="Web Screenshot 01" width="240"></td>
+    <td><img src="assets/screenshot_web_02.png" alt="Web Screenshot 02" width="240"></td>
   </tr>
 </table>
 
