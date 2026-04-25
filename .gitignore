@@ -1,0 +1,34 @@
+# macOS
+.DS_Store
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Local caches and temporary build data
+.cache/
+.xcode/
+DerivedData/
+build/
+dist/
+
+# Go
+coverage.out
+.coverprofile
+
+# Xcode user-specific files
+**/xcuserdata/
+*.xcuserstate
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+*.xcresult
+
+# CodexFlow local runtime state
+.codexflow/
+codexflow-state.db
+codexflow-state.db-*
