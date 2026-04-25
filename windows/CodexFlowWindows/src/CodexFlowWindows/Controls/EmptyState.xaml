@@ -1,0 +1,12 @@
+<UserControl
+    x:Class="CodexFlowWindows.Controls.EmptyState"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Border BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="18">
+        <StackPanel Spacing="8" HorizontalAlignment="Center">
+            <FontIcon Glyph="&#xE946;" FontSize="24" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            <TextBlock x:Name="TitleText" Text="暂无数据" FontWeight="SemiBold" HorizontalAlignment="Center" />
+            <TextBlock x:Name="MessageText" Text="" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextAlignment="Center" MaxWidth="360" />
+        </StackPanel>
+    </Border>
+</UserControl>

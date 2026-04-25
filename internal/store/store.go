@@ -342,6 +342,14 @@ func (s *Store) DeletePending(id string) (PendingRequest, bool) {
 	return clonePending(*request), true
 }
 
+func (s *Store) RestorePending(request PendingRequest) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cloned := clonePending(request)
+	s.pending[cloned.ID] = &cloned
+}
+
 func (s *Store) SnapshotPending() []PendingRequest {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

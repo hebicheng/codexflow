@@ -1,0 +1,42 @@
+<Page
+    x:Class="CodexFlowWindows.Views.ApprovalsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid>
+        <ScrollViewer Padding="18">
+            <StackPanel Spacing="12">
+                <TextBlock Text="审批中心" FontSize="22" FontWeight="SemiBold" />
+                <TextBlock Text="处理命令、文件变更、权限和用户输入请求。" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                <ItemsControl ItemsSource="{Binding ApprovalGroups}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Spacing="8" Margin="0,0,0,16">
+                                <TextBlock Text="{Binding ThreadId}" FontFamily="Consolas" FontWeight="SemiBold" />
+                                <ListView ItemsSource="{Binding Approvals}" IsItemClickEnabled="True" ItemClick="ApprovalClicked">
+                                    <ListView.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border CornerRadius="8" Padding="12" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                                                <StackPanel Spacing="6">
+                                                    <Grid ColumnSpacing="8">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Text="{Binding KindTitle}" FontWeight="SemiBold" />
+                                                        <TextBlock Grid.Column="1" Text="{Binding CreatedAt}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                    </Grid>
+                                                    <TextBlock Text="{Binding Summary}" TextWrapping="Wrap" />
+                                                    <TextBlock Text="{Binding Reason}" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ListView.ItemTemplate>
+                                </ListView>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</Page>

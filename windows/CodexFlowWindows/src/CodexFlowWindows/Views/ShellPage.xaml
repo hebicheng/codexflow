@@ -1,0 +1,52 @@
+<Page
+    x:Class="CodexFlowWindows.Views.ShellPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:CodexFlowWindows.Controls">
+    <Grid>
+        <NavigationView
+            x:Name="NavView"
+            IsBackButtonVisible="Collapsed"
+            PaneDisplayMode="LeftCompact"
+            SelectionChanged="NavigationSelectionChanged">
+            <NavigationView.MenuItems>
+                <NavigationViewItem Content="Dashboard" Tag="Dashboard">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="Home" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="Sessions" Tag="Sessions">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="Library" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="Approvals" Tag="Approvals">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="Accept" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="Settings" Tag="Settings">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="Setting" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+            </NavigationView.MenuItems>
+            <NavigationView.Header>
+                <Grid ColumnSpacing="12" Padding="0,8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="{Binding AgentBaseUrl}" FontFamily="Consolas" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                    <InfoBadge Grid.Column="1" Value="{Binding PendingApprovals}" />
+                    <TextBlock Grid.Column="2" Text="{Binding HealthText}" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="3" Text="{Binding SseText}" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                </Grid>
+            </NavigationView.Header>
+            <Frame x:Name="ContentFrame" />
+        </NavigationView>
+        <controls:LoadingOverlay IsLoading="{Binding Repository.IsActionRunning}" />
+    </Grid>
+</Page>

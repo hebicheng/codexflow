@@ -177,11 +177,6 @@ func (a *Agent) PendingRequests() []PendingRequestView {
 }
 
 func (a *Agent) ResolveRequest(ctx context.Context, requestID string, result json.RawMessage) error {
-	request, ok := a.store.DeletePending(requestID)
-	if !ok {
-		return fmt.Errorf("pending request %s not found", requestID)
-	}
-
 	var payload any
 	if len(result) > 0 {
 		if err := json.Unmarshal(result, &payload); err != nil {
@@ -189,7 +184,13 @@ func (a *Agent) ResolveRequest(ctx context.Context, requestID string, result jso
 		}
 	}
 
+	request, ok := a.store.DeletePending(requestID)
+	if !ok {
+		return fmt.Errorf("pending request %s not found", requestID)
+	}
+
 	if err := a.client.Reply(ctx, request.RawRPCRequestID, payload); err != nil {
+		a.store.RestorePending(request)
 		return err
 	}
 

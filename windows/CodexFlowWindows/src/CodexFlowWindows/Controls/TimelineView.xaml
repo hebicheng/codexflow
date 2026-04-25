@@ -1,0 +1,36 @@
+<UserControl
+    x:Class="CodexFlowWindows.Controls.TimelineView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ItemsControl x:Name="TimelineItems">
+        <ItemsControl.ItemTemplate>
+            <DataTemplate>
+                <Border CornerRadius="8" Padding="12" Margin="0,0,0,8" Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                    <StackPanel Spacing="7">
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="{Binding Title}" FontWeight="SemiBold" />
+                            <TextBlock Grid.Column="1" Text="{Binding Status}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        </Grid>
+                        <TextBlock Text="{Binding Body}" TextWrapping="Wrap" MaxLines="12" />
+                        <TextBlock Text="{Binding Auxiliary}" TextWrapping="Wrap" MaxLines="12" FontFamily="Consolas" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <ItemsControl ItemsSource="{Binding Metadata}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}">
+                                        <Run Text="{Binding Key}" />
+                                        <Run Text=": " />
+                                        <Run Text="{Binding Value}" />
+                                    </TextBlock>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+            </DataTemplate>
+        </ItemsControl.ItemTemplate>
+    </ItemsControl>
+</UserControl>

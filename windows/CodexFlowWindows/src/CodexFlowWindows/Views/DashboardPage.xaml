@@ -1,0 +1,107 @@
+<Page
+    x:Class="CodexFlowWindows.Views.DashboardPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:CodexFlowWindows.Controls"
+    xmlns:views="using:CodexFlowWindows.Views">
+    <Grid x:Name="Root" Padding="18" RowSpacing="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Spacing="10">
+            <Grid ColumnSpacing="12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                    <TextBlock Text="CodexFlow 控制台" FontSize="24" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding Repository.AgentBaseUrl}" FontFamily="Consolas" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                </StackPanel>
+                <Button Grid.Column="1" Content="刷新" Command="{Binding RefreshCommand}" />
+                <Button Grid.Column="2" Content="新建会话" Click="NewSessionClicked" />
+            </Grid>
+            <controls:ErrorBanner Message="{Binding Repository.ErrorMessage}" />
+            <controls:StatsBar Stats="{Binding Stats}" />
+        </StackPanel>
+
+        <Grid Grid.Row="1" ColumnSpacing="14">
+            <VisualStateManager.VisualStateGroups>
+                <VisualStateGroup>
+                    <VisualState x:Name="Narrow">
+                        <VisualState.StateTriggers>
+                            <AdaptiveTrigger MinWindowWidth="0" />
+                        </VisualState.StateTriggers>
+                        <VisualState.Setters>
+                            <Setter Target="SessionsColumn.Width" Value="*" />
+                            <Setter Target="DetailColumn.Width" Value="0" />
+                            <Setter Target="InspectorColumn.Width" Value="0" />
+                            <Setter Target="DetailHost.Visibility" Value="Collapsed" />
+                            <Setter Target="InspectorHost.Visibility" Value="Collapsed" />
+                        </VisualState.Setters>
+                    </VisualState>
+                    <VisualState x:Name="Medium">
+                        <VisualState.StateTriggers>
+                            <AdaptiveTrigger MinWindowWidth="820" />
+                        </VisualState.StateTriggers>
+                        <VisualState.Setters>
+                            <Setter Target="SessionsColumn.Width" Value="360" />
+                            <Setter Target="DetailColumn.Width" Value="*" />
+                            <Setter Target="InspectorColumn.Width" Value="0" />
+                            <Setter Target="DetailHost.Visibility" Value="Visible" />
+                            <Setter Target="InspectorHost.Visibility" Value="Collapsed" />
+                        </VisualState.Setters>
+                    </VisualState>
+                    <VisualState x:Name="Wide">
+                        <VisualState.StateTriggers>
+                            <AdaptiveTrigger MinWindowWidth="1180" />
+                        </VisualState.StateTriggers>
+                        <VisualState.Setters>
+                            <Setter Target="SessionsColumn.Width" Value="360" />
+                            <Setter Target="DetailColumn.Width" Value="*" />
+                            <Setter Target="InspectorColumn.Width" Value="360" />
+                            <Setter Target="DetailHost.Visibility" Value="Visible" />
+                            <Setter Target="InspectorHost.Visibility" Value="Visible" />
+                        </VisualState.Setters>
+                    </VisualState>
+                </VisualStateGroup>
+            </VisualStateManager.VisualStateGroups>
+
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition x:Name="SessionsColumn" Width="360" />
+                <ColumnDefinition x:Name="DetailColumn" Width="*" />
+                <ColumnDefinition x:Name="InspectorColumn" Width="360" />
+            </Grid.ColumnDefinitions>
+
+            <ScrollViewer>
+                <ItemsControl ItemsSource="{Binding SessionGroups}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Spacing="8" Margin="0,0,0,16">
+                                <TextBlock Text="{Binding Title}" FontSize="16" FontWeight="SemiBold" />
+                                <ListView ItemsSource="{Binding Sessions}" SelectionChanged="SessionSelectionChanged" IsItemClickEnabled="True" ItemClick="SessionItemClicked">
+                                    <ListView.ItemTemplate>
+                                        <DataTemplate>
+                                            <controls:SessionCard Session="{Binding}" />
+                                        </DataTemplate>
+                                    </ListView.ItemTemplate>
+                                </ListView>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+
+            <Border x:Name="DetailHost" Grid.Column="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
+                <views:SessionDetailPage />
+            </Border>
+
+            <Border x:Name="InspectorHost" Grid.Column="2" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
+                <views:ApprovalsPage />
+            </Border>
+        </Grid>
+    </Grid>
+</Page>

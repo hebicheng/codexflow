@@ -1,0 +1,27 @@
+<ContentDialog
+    x:Class="CodexFlowWindows.Views.ApprovalDetailDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="处理审批"
+    PrimaryButtonText="提交"
+    CloseButtonText="取消"
+    DefaultButton="Primary"
+    PrimaryButtonClick="PrimaryClicked">
+    <StackPanel Spacing="12" MinWidth="540">
+        <TextBlock Text="{Binding SelectedApproval.KindTitle}" FontSize="18" FontWeight="SemiBold" />
+        <TextBlock Text="{Binding SelectedApproval.Summary}" TextWrapping="Wrap" />
+        <TextBlock Text="{Binding SelectedApproval.Reason}" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+        <ComboBox
+            Header="选择"
+            ItemsSource="{Binding SelectedApproval.Choices}"
+            SelectedItem="{Binding SelectedChoice, Mode=TwoWay}"
+            MinWidth="240" />
+        <TextBox
+            Header="回复文本（userInput 时使用）"
+            Text="{Binding ReplyText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+            AcceptsReturn="True"
+            MinHeight="100"
+            TextWrapping="Wrap" />
+        <TextBlock Text="{Binding SelectedApproval.ThreadId}" FontFamily="Consolas" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+    </StackPanel>
+</ContentDialog>

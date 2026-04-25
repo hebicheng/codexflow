@@ -15,6 +15,12 @@ DerivedData/
 build/
 dist/
 
+# .NET / Visual Studio
+.vs/
+**/bin/
+**/obj/
+TestResults/
+
 # Go
 coverage.out
 .coverprofile
