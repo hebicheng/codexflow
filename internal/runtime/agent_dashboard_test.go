@@ -1,6 +1,9 @@
 package runtime
 
 import (
+	"context"
+	"encoding/json"
+	"log/slog"
 	"testing"
 
 	"codexflow/internal/codex"
@@ -57,5 +60,54 @@ func TestDashboardLoadedSessionsExcludeEndedSessions(t *testing.T) {
 		if session.ID == "ended-thread" && session.Loaded {
 			t.Fatalf("ended session should not be marked loaded in API summary")
 		}
+	}
+}
+
+func TestResolveRequestKeepsPendingWhenPayloadIsInvalid(t *testing.T) {
+	sessionStore, err := store.New(nil)
+	if err != nil {
+		t.Fatalf("create session store: %v", err)
+	}
+
+	pending := sessionStore.UpsertPending(
+		"item/commandExecution/requestApproval",
+		json.RawMessage(`1`),
+		map[string]any{"threadId": "thread-1"},
+		[]string{"accept", "decline"},
+	)
+	agent := &Agent{store: sessionStore}
+
+	if err := agent.ResolveRequest(context.Background(), pending.ID, json.RawMessage(`{`)); err == nil {
+		t.Fatal("ResolveRequest returned nil error for invalid payload")
+	}
+
+	if got := len(sessionStore.SnapshotPending()); got != 1 {
+		t.Fatalf("pending requests after invalid payload = %d, want 1", got)
+	}
+}
+
+func TestResolveRequestRestoresPendingWhenReplyFails(t *testing.T) {
+	sessionStore, err := store.New(nil)
+	if err != nil {
+		t.Fatalf("create session store: %v", err)
+	}
+
+	pending := sessionStore.UpsertPending(
+		"item/commandExecution/requestApproval",
+		json.RawMessage(`1`),
+		map[string]any{"threadId": "thread-1"},
+		[]string{"accept", "decline"},
+	)
+	agent := &Agent{
+		client: codex.NewClient("codex", slog.Default()),
+		store:  sessionStore,
+	}
+
+	if err := agent.ResolveRequest(context.Background(), pending.ID, json.RawMessage(`{"decision":"accept"}`)); err == nil {
+		t.Fatal("ResolveRequest returned nil error with an unstarted codex client")
+	}
+
+	if got := len(sessionStore.SnapshotPending()); got != 1 {
+		t.Fatalf("pending requests after failed reply = %d, want 1", got)
 	}
 }

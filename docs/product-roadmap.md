@@ -5,7 +5,10 @@
 - local Mac agent with live Codex protocol integration
 - session discovery across historical threads
 - approval queue capture
-- iOS client scaffold with dashboard, session detail, approval center, and settings
+- iOS client with dashboard, session detail, approval center, and settings
+- Android client with dashboard, session detail, approval center, settings, and SSE refresh
+- Windows WinUI 3 client with dashboard, session detail, approval center, settings, and SSE refresh
+- shared client API contract for iOS, Android, and Windows
 
 ## Next Build Targets
 
@@ -19,7 +22,7 @@
 
 - wire the iOS app to the SSE stream
 - surface live command output, diff updates, and plan changes
-- add push notifications for approvals and turn completion
+- add push notifications for approvals and turn completion across APNs, FCM, and Windows notifications
 
 ### 3. Approval Policies
 

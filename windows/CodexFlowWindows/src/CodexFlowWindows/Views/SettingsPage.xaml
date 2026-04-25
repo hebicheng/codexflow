@@ -1,0 +1,39 @@
+<Page
+    x:Class="CodexFlowWindows.Views.SettingsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:CodexFlowWindows.Controls">
+    <ScrollViewer Padding="24">
+        <StackPanel Spacing="16" MaxWidth="860">
+            <TextBlock Text="设置" FontSize="26" FontWeight="SemiBold" />
+            <controls:ErrorBanner Message="{Binding Repository.ErrorMessage}" />
+
+            <Border CornerRadius="8" Padding="16" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="Agent base URL" FontWeight="SemiBold" />
+                    <TextBox
+                        x:Name="BaseUrlBox"
+                        Text="{Binding BaseUrl, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                        PlaceholderText="http://127.0.0.1:4318"
+                        FontFamily="Consolas" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button Content="保存" Command="{Binding SaveCommand}" />
+                        <Button Content="测试连接" Command="{Binding TestConnectionCommand}" />
+                        <Button Content="恢复默认值" Command="{Binding ResetCommand}" />
+                    </StackPanel>
+                    <InfoBar IsOpen="True" IsClosable="False" Severity="Informational" Title="连接结果" Message="{Binding TestResult}" />
+                </StackPanel>
+            </Border>
+
+            <Border CornerRadius="8" Padding="16" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="Windows 使用提示" FontWeight="SemiBold" />
+                    <TextBlock Text="同一台机器调试时使用默认地址 http://127.0.0.1:4318。" TextWrapping="Wrap" />
+                    <TextBlock Text="如果 Windows App 在 Windows 机器上、Agent 在 Mac 上，Mac Agent 需要监听 0.0.0.0:4318，并在这里填写 Mac 局域网地址。" TextWrapping="Wrap" />
+                    <TextBlock Text="go run ./cmd/codexflow-agent" FontFamily="Consolas" />
+                    <TextBlock Text="CODEXFLOW_LISTEN_ADDR=0.0.0.0:4318 go run ./cmd/codexflow-agent" FontFamily="Consolas" />
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

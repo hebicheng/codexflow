@@ -1,0 +1,83 @@
+<Page
+    x:Class="CodexFlowWindows.Views.SessionDetailPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:CodexFlowWindows.Controls">
+    <Grid>
+        <ScrollViewer Padding="18">
+            <StackPanel Spacing="14">
+                <controls:ErrorBanner Message="{Binding Repository.CurrentSession.ErrorMessage}" />
+
+                <Border CornerRadius="8" Padding="16" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                    <StackPanel Spacing="10">
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="{Binding CurrentSession.DisplayName}" FontSize="22" FontWeight="SemiBold" />
+                                <TextBlock Text="{Binding CurrentSession.Cwd}" FontFamily="Consolas" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" />
+                            </StackPanel>
+                            <controls:StatusBadge
+                                Grid.Column="1"
+                                Status="{Binding CurrentSession.Status}"
+                                Waiting="{Binding CurrentSession.HasWaitingState}"
+                                Ended="{Binding CurrentSession.Ended}" />
+                        </Grid>
+                        <StackPanel Orientation="Horizontal" Spacing="12">
+                            <TextBlock Text="{Binding CurrentSession.Branch}" />
+                            <TextBlock Text="{Binding CurrentSession.ModelProvider}" />
+                            <TextBlock Text="{Binding CurrentSession.Source}" />
+                            <TextBlock Text="{Binding CurrentSession.UpdatedAtDisplay}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        </StackPanel>
+                        <TextBlock Text="{Binding CurrentSession.PreviewExcerpt}" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button Content="接管到 CodexFlow" Command="{Binding ResumeCommand}" />
+                            <Button Content="刷新详情" Command="{Binding RefreshCommand}" />
+                            <Button Content="结束会话" Click="EndClicked" />
+                            <Button Content="归档" Click="ArchiveClicked" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <controls:ComposerBar
+                    x:Name="Composer"
+                    Prompt="{Binding Prompt, Mode=TwoWay}"
+                    ButtonText="{Binding ComposerButtonText}"
+                    SubmitCommand="{Binding SubmitPromptCommand}" />
+
+                <Button Content="Interrupt 当前 turn" Command="{Binding InterruptCommand}" HorizontalAlignment="Left" />
+
+                <ItemsControl ItemsSource="{Binding Detail.Turns}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Expander Margin="0,0,0,12" IsExpanded="False">
+                                <Expander.Header>
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding Id}" FontFamily="Consolas" FontWeight="SemiBold" />
+                                            <TextBlock Text="{Binding Status}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        </StackPanel>
+                                        <TextBlock Grid.Column="1" Text="{Binding DurationDisplay}" VerticalAlignment="Center" />
+                                    </Grid>
+                                </Expander.Header>
+                                <StackPanel Spacing="12" Padding="0,10,0,0">
+                                    <TextBlock Text="{Binding Error}" TextWrapping="Wrap" Foreground="{ThemeResource SystemFillColorCriticalBrush}" />
+                                    <controls:PlanView Explanation="{Binding PlanExplanation}" Plan="{Binding Plan}" />
+                                    <controls:DiffViewer Diff="{Binding Diff}" />
+                                    <controls:TimelineView Items="{Binding Items}" />
+                                </StackPanel>
+                            </Expander>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+        </ScrollViewer>
+        <controls:LoadingOverlay IsLoading="{Binding Repository.CurrentSession.IsLoading}" />
+    </Grid>
+</Page>

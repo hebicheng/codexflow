@@ -1,0 +1,25 @@
+<UserControl
+    x:Class="CodexFlowWindows.Controls.PlanView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <StackPanel Spacing="8">
+        <TextBlock x:Name="ExplanationText" Text="" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+        <ItemsControl x:Name="PlanItems">
+            <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                    <Grid ColumnSpacing="8" Margin="0,2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="12" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Ellipse Width="7" Height="7" Fill="{ThemeResource AccentFillColorDefaultBrush}" VerticalAlignment="Top" Margin="0,6,0,0" />
+                        <StackPanel Grid.Column="1" Spacing="2">
+                            <TextBlock Text="{Binding Step}" TextWrapping="Wrap" />
+                            <TextBlock Text="{Binding Status}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        </StackPanel>
+                    </Grid>
+                </DataTemplate>
+            </ItemsControl.ItemTemplate>
+        </ItemsControl>
+    </StackPanel>
+</UserControl>

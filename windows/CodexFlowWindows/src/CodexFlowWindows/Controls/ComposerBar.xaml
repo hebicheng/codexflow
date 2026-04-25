@@ -1,0 +1,26 @@
+<UserControl
+    x:Class="CodexFlowWindows.Controls.ComposerBar"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Border Padding="12" CornerRadius="8" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+        <Grid RowSpacing="8">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <TextBox
+                x:Name="PromptBox"
+                AcceptsReturn="True"
+                MinHeight="96"
+                TextWrapping="Wrap"
+                PlaceholderText="输入下一步 prompt；Ctrl+Enter 发送" />
+            <Button
+                x:Name="SubmitButton"
+                Grid.Row="1"
+                HorizontalAlignment="Right"
+                MinWidth="140"
+                Content="继续下一步"
+                Click="SubmitClicked" />
+        </Grid>
+    </Border>
+</UserControl>
