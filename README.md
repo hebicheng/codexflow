@@ -202,6 +202,48 @@ CODEXFLOW_LISTEN_ADDR=0.0.0.0:4318 go run ./cmd/codexflow-agent
 http://192.168.1.10:4318
 ```
 
+#### 通过 Tailscale Service 远程访问（可选）
+
+如果你希望在局域网外用 Android / iOS / Web 客户端访问 CodexFlow，可以把 Agent 和 Web 客户端只绑定到本机回环地址，再通过 Tailscale Service 暴露一个 tailnet 内部 HTTPS 入口。这样不需要把 CodexFlow 直接暴露到公网，也不需要在手机上记端口。
+
+示例拓扑：
+
+```text
+https://codexflow.<tailnet>.ts.net/
+  /healthz -> http://127.0.0.1:4318/healthz
+  /api     -> http://127.0.0.1:4318/api
+  /        -> http://127.0.0.1:8088
+```
+
+先启动 Agent：
+
+```bash
+CODEXFLOW_LISTEN_ADDR=127.0.0.1:4318 go run ./cmd/codexflow-agent
+```
+
+再启动一个静态文件服务承载 Flutter Web 构建产物，例如：
+
+```bash
+cd flutter/codexflow/build/web
+python3 -m http.server 8088 --bind 127.0.0.1
+```
+
+然后配置 Tailscale Service。下面假设 service 名称是 `svc:codexflow`：
+
+```bash
+tailscale serve --service svc:codexflow --bg --https 443 http://127.0.0.1:8088
+tailscale serve --service svc:codexflow --bg --https 443 --set-path /api http://127.0.0.1:4318/api
+tailscale serve --service svc:codexflow --bg --https 443 --set-path /healthz http://127.0.0.1:4318/healthz
+```
+
+如果 Tailscale 提示需要管理员批准，需要先在 Tailscale 控制台批准这台机器作为 `svc:codexflow` 的 service proxy。批准后，在客户端里填写：
+
+```text
+https://codexflow.<tailnet>.ts.net
+```
+
+安全提醒：当前 CodexFlow Agent 还没有内置登录和设备配对机制。远程访问时建议只使用 tailnet 内部的 Tailscale Service，并配合 Tailscale ACL 限制可访问设备；不要用 Funnel 或公网反向代理直接公开 CodexFlow。
+
 ### 4. 验证 Agent 是否正常
 
 ```bash
@@ -304,6 +346,7 @@ http://192.168.1.10:4318
 - `Flutter Web / Chrome`：如果页面和 Agent 在同一台 Mac 上，通常可直接使用 `http://127.0.0.1:4318`
 - `Android 模拟器 / 真机`：不要填 `127.0.0.1`，要填你 Mac 的局域网 IP
 - 当前 Agent 已加入浏览器跨域支持，Flutter Web 可以直接访问本地 Agent
+- 如果 Android release APK 报 `ClientException with SocketException: Failed host lookup`，请确认 `android/app/src/main/AndroidManifest.xml` 声明了 `android.permission.INTERNET`。Debug/Profile manifest 中的权限不会自动覆盖 release 包。
 
 ## 基本使用方式
 
