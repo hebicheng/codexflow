@@ -14,13 +14,35 @@ class DashboardScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final model = context.watch<AppModel>();
-    final managedSessions = model.dashboard.sessions
-        .where((session) => session.loaded && !session.isEnded)
+    final selectedAgentId = model.selectedStartAgentId;
+    final filteredSessions = model.dashboard.sessions
+        .where((session) => session.agentId == selectedAgentId)
+        .toList();
+    final allowedSessionIds = filteredSessions.map((item) => item.id).toSet();
+    final filteredApprovals = model.dashboard.approvals
+        .where((approval) => allowedSessionIds.contains(approval.threadId))
+        .toList();
+    final loadedCount =
+        filteredSessions.where((session) => session.loaded).length;
+    final activeCount = filteredSessions
+        .where((session) => session.status == 'active' && !session.isEnded)
+        .length;
+    final pendingApprovalCount = filteredApprovals.length;
+
+    final managedSessions = filteredSessions
+        .where((session) => session.lifecycleStage == 'managed')
         .toList();
     final endedSessions =
-        model.dashboard.sessions.where((session) => session.isEnded).toList();
-    final historySessions = model.dashboard.sessions
-        .where((session) => !session.loaded && !session.isEnded)
+        filteredSessions.where((session) => session.lifecycleStage == 'ended').toList();
+    final runtimeSessions = filteredSessions
+        .where(
+          (session) => session.lifecycleStage == 'runtime_available',
+        )
+        .toList();
+    final historySessions = filteredSessions
+        .where(
+          (session) => session.lifecycleStage == 'history_only',
+        )
         .toList();
 
     return Scaffold(
@@ -39,6 +61,7 @@ class DashboardScreen extends StatelessWidget {
             children: <Widget>[
               Row(
                 children: <Widget>[
+                  _AgentSwitchButton(model: model),
                   const Spacer(),
                   AgentStatusBadge(connected: model.isAgentOnline),
                 ],
@@ -54,26 +77,51 @@ class DashboardScreen extends StatelessWidget {
                 children: <Widget>[
                   MetricCard(
                     title: '总会话',
-                    value: '${model.dashboard.stats.totalSessions}',
+                    value: '${filteredSessions.length}',
                     tone: Palette.softBlue,
                   ),
                   MetricCard(
                     title: '已加载',
-                    value: '${model.dashboard.stats.loadedSessions}',
+                    value: '$loadedCount',
                     tone: Palette.accent,
                   ),
                   MetricCard(
                     title: '运行中',
-                    value: '${model.dashboard.stats.activeSessions}',
+                    value: '$activeCount',
                     tone: Palette.accent2,
                   ),
                   MetricCard(
                     title: '待审批',
-                    value: '${model.dashboard.stats.pendingApprovals}',
+                    value: '$pendingApprovalCount',
                     tone: Palette.warning,
                   ),
                 ],
               ),
+              if (model.operationNotice.isNotEmpty) ...<Widget>[
+                const SizedBox(height: 12),
+                Container(
+                  width: double.infinity,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: (model.operationNoticeIsError
+                            ? Palette.danger
+                            : Palette.success)
+                        .appOpacity(0.08),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    model.operationNotice,
+                    style: roundedTextStyle(
+                      size: 12,
+                      weight: FontWeight.w500,
+                      color: model.operationNoticeIsError
+                          ? Palette.danger
+                          : Palette.success,
+                    ),
+                  ),
+                ),
+              ],
               if (!model.isAgentOnline &&
                   model.agentConnectionError.isNotEmpty) ...<Widget>[
                 const SizedBox(height: 12),
@@ -94,7 +142,7 @@ class DashboardScreen extends StatelessWidget {
                   ),
                 ),
               ],
-              if (model.dashboard.stats.pendingApprovals > 0) ...<Widget>[
+              if (pendingApprovalCount > 0) ...<Widget>[
                 const SizedBox(height: 12),
                 const PanelCard(
                   compact: true,
@@ -127,7 +175,7 @@ class DashboardScreen extends StatelessWidget {
                               size: 16, weight: FontWeight.w600)),
                       const SizedBox(width: 8),
                       Text(
-                        '${model.dashboard.sessions.length}',
+                        '${filteredSessions.length}',
                         style: roundedTextStyle(
                             size: 12,
                             weight: FontWeight.w600,
@@ -158,7 +206,7 @@ class DashboardScreen extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 10),
-              if (model.dashboard.sessions.isEmpty)
+              if (filteredSessions.isEmpty)
                 const PanelCard(
                   compact: true,
                   child: Text(
@@ -184,15 +232,96 @@ class DashboardScreen extends StatelessWidget {
                         '这些会话的历史和 turns 仍然保留，但已经从 CodexFlow 托管态退出。需要继续时，再重新接管。',
                     sessions: endedSessions,
                   ),
+                if (runtimeSessions.isNotEmpty)
+                  _SessionGroup(
+                    title: selectedAgentId == 'claude' ? '可接管 Runtime' : '待接管',
+                    helper: selectedAgentId == 'claude'
+                        ? '这些 Claude 会话当前在本机 runtime 中可见。接管后，CodexFlow 才能继续刷新状态、处理中断和后续操作。'
+                        : '这些会话当前未接管，但运行时仍可继续接管。',
+                    sessions: runtimeSessions,
+                  ),
                 if (historySessions.isNotEmpty)
                   _SessionGroup(
-                    title: '历史会话',
-                    helper: '这些只是已发现的真实会话记录。先接管，才可以继续执行、处理中断和后续审批。',
+                    title: selectedAgentId == 'claude' ? '历史导入' : '历史会话',
+                    helper: selectedAgentId == 'claude'
+                        ? '这些 Claude 会话目前只发现了历史 transcript。可以查看历史，但不代表当前存在可接管 runtime。'
+                        : '这些只是已发现的真实会话记录。先接管，才可以继续执行、处理中断和后续审批。',
                     sessions: historySessions,
                   ),
               ],
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AgentSwitchButton extends StatelessWidget {
+  const _AgentSwitchButton({required this.model});
+
+  final AppModel model;
+
+  @override
+  Widget build(BuildContext context) {
+    AgentOption? selected;
+    for (final option in model.startAgentOptions) {
+      if (option.id == model.selectedStartAgentId) {
+        selected = option;
+        break;
+      }
+    }
+    final selectedName = selected?.name ?? 'Codex';
+
+    return PopupMenuButton<String>(
+      tooltip: '切换 Agent',
+      onSelected: (String value) {
+        model.setSelectedStartAgent(value);
+      },
+      itemBuilder: (BuildContext context) {
+        return model.startAgentOptions.map((option) {
+          final isSelected = option.id == model.selectedStartAgentId;
+          return PopupMenuItem<String>(
+            value: option.id,
+            enabled: option.available,
+            child: Row(
+              children: <Widget>[
+                Expanded(
+                  child: Text(
+                    option.name,
+                    style: roundedTextStyle(
+                      size: 13,
+                      weight: FontWeight.w600,
+                      color: option.available ? Palette.ink : Palette.mutedInk,
+                    ),
+                  ),
+                ),
+                if (isSelected)
+                  const Icon(Icons.check_rounded, size: 16, color: Palette.softBlue),
+              ],
+            ),
+          );
+        }).toList();
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.78),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: Palette.line),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            const Icon(Icons.account_tree_rounded, size: 14, color: Palette.ink),
+            const SizedBox(width: 6),
+            Text(
+              selectedName,
+              style: roundedTextStyle(size: 12, weight: FontWeight.w600),
+            ),
+            const SizedBox(width: 6),
+            const Icon(Icons.expand_more_rounded, size: 14, color: Palette.ink),
+          ],
         ),
       ),
     );
@@ -261,6 +390,10 @@ class SessionRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final model = context.watch<AppModel>();
     final sessionApprovals = model.approvalsFor(session.id);
+    final capabilities = model.capabilitiesForSession(session);
+    final canPrimaryAction = (session.isEnded || !session.loaded)
+        ? model.canResumeSession(session)
+        : true;
     return PanelCard(
       compact: true,
       child: Column(
@@ -331,13 +464,37 @@ class SessionRow extends StatelessWidget {
                   ),
                 ],
                 const SizedBox(height: 10),
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: <Widget>[
-                      CapsuleTag(title: '来源', value: session.source),
-                      const SizedBox(width: 8),
-                      CapsuleTag(
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: <Widget>[
+                        CapsuleTag(
+                          title: '托管',
+                          value: session.loaded ? '已接管' : '未接管',
+                        ),
+                        if (session.isClaudeSession) ...<Widget>[
+                          const SizedBox(width: 8),
+                          CapsuleTag(
+                            title: '链路',
+                            value: session.runtimeAvailable ? 'Runtime' : 'History',
+                          ),
+                          if (session.loaded &&
+                              session.runtimeAttachMode.isNotEmpty) ...<Widget>[
+                            const SizedBox(width: 8),
+                            CapsuleTag(
+                              title: '接管',
+                              value: session.runtimeAttachMode == 'resumed_existing'
+                                  ? '现有 Runtime'
+                                  : (session.runtimeAttachMode == 'opened_from_history'
+                                      ? '历史新开'
+                                      : '新建 Runtime'),
+                            ),
+                          ],
+                        ],
+                        const SizedBox(width: 8),
+                        CapsuleTag(title: '来源', value: session.source),
+                        const SizedBox(width: 8),
+                        CapsuleTag(
                           title: '分支',
                           value:
                               session.branch.isEmpty ? '未识别' : session.branch),
@@ -376,12 +533,13 @@ class SessionRow extends StatelessWidget {
                   background: _primaryBackground,
                   foreground: _primaryForeground,
                   borderColor: _primaryBorder,
+                  enabled: canPrimaryAction,
                   onPressed: () => _handlePrimaryAction(context),
                 ),
               ),
             ],
           ),
-          if (session.pendingApprovals > 0) ...<Widget>[
+          if (capabilities.supportsApprovals && session.pendingApprovals > 0) ...<Widget>[
             const SizedBox(height: 10),
             ActionButton(
               title: '快速处理审批 (${session.pendingApprovals})',
@@ -401,7 +559,7 @@ class SessionRow extends StatelessWidget {
               },
             ),
           ],
-          if (!session.loaded || session.isEnded) ...<Widget>[
+          if (capabilities.supportsArchive && (!session.loaded || session.isEnded)) ...<Widget>[
             const SizedBox(height: 10),
             ActionButton(
               title: session.isEnded ? '归档已结束会话' : '从列表移除',
@@ -440,6 +598,9 @@ class SessionRow extends StatelessWidget {
       return '重新接管';
     }
     if (!session.loaded) {
+      if (session.isClaudeSession && !session.runtimeAvailable) {
+        return '当前无 Runtime';
+      }
       return '接管到 CodexFlow';
     }
     return session.lastTurnStatus == 'inProgress' ? '中断并结束' : '结束会话';
@@ -469,6 +630,14 @@ class SessionRow extends StatelessWidget {
   String get _actionHint {
     if (session.isEnded) {
       return '这个会话已经在 CodexFlow 中结束。历史和 turn 会保留；如需继续，重新接管即可。';
+    }
+    if (session.isClaudeSession && session.runtimeAvailable && !session.loaded) {
+      return 'Claude runtime 当前可见，但还没接到 CodexFlow。接管后才能继续刷新状态、处理中断和下一轮。';
+    }
+    if (session.isClaudeSession &&
+        session.historyAvailable &&
+        !session.runtimeAvailable) {
+      return '这是 Claude 历史导入会话。现在可以查看历史，但当前没有可接管 runtime。';
     }
     if (session.pendingApprovals > 0) {
       return '有 ${session.pendingApprovals} 个审批等待处理，先去审批页处理。';
@@ -763,6 +932,7 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
                                       final success = await appModel.startSession(
                                         cwd: trimmedCwd,
                                         prompt: trimmedPrompt,
+                                        agentId: appModel.selectedStartAgentId,
                                       );
 
                                       if (!mounted) {

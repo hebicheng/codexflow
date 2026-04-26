@@ -14,7 +14,12 @@ final class AppModel: ObservableObject {
   @Published var isAgentOnline = false
   @Published var agentConnectionError = ""
   @Published var connectionError = ""
+  @Published var operationNotice = ""
+  @Published var operationNoticeIsError = false
   @Published var composerDraft = ""
+  @Published var selectedStartAgentID = "codex"
+
+  private var noticeTask: Task<Void, Never>?
 
   init() {
     let saved = UserDefaults.standard.string(forKey: baseURLKey) ?? "http://127.0.0.1:4318"
@@ -38,6 +43,7 @@ final class AppModel: ObservableObject {
       let client = try APIClient(baseURLString: baseURLString)
       let latestDashboard = try await client.dashboard()
       dashboard = latestDashboard
+      syncSelectedAgent(with: latestDashboard)
       consecutiveDashboardFailures = 0
       isAgentOnline = latestDashboard.agent.connected
       agentConnectionError = ""
@@ -51,7 +57,8 @@ final class AppModel: ObservableObject {
   }
 
   func approvals(for sessionID: String) -> [PendingRequestView] {
-    dashboard.approvals
+    guard supportsApprovals(forSessionID: sessionID) else { return [] }
+    return dashboard.approvals
       .filter { $0.threadId == sessionID }
       .sorted { $0.createdAt < $1.createdAt }
   }
@@ -71,30 +78,45 @@ final class AppModel: ObservableObject {
     }
   }
 
-  func startSession(cwd: String, prompt: String) async -> Bool {
+  func startSession(cwd: String, prompt: String, agentID: String) async -> Bool {
     do {
       let client = try APIClient(baseURLString: baseURLString)
-      _ = try await client.startSession(
+      let createdSession = try await client.startSession(
         cwd: cwd.trimmingCharacters(in: .whitespacesAndNewlines),
-        prompt: prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        prompt: prompt.trimmingCharacters(in: .whitespacesAndNewlines),
+        agent: agentID
       )
+      upsertSessionSummary(createdSession)
+      connectionError = ""
+      showNotice("会话已创建。")
       await refreshDashboard()
+      await loadSession(id: createdSession.id)
       return true
     } catch {
       connectionError = error.localizedDescription
+      showNotice("创建会话失败：\(error.localizedDescription)", isError: true)
       return false
     }
   }
 
   func resumeSession(_ session: SessionSummary) async {
+    guard canResume(session) else {
+      let message = session.resumeBlockedReason.isEmpty ? "这个会话当前不能重新接管。" : session.resumeBlockedReason
+      connectionError = message
+      showNotice(message, isError: true)
+      return
+    }
     do {
       let client = try APIClient(baseURLString: baseURLString)
       let updatedSession = try await client.resumeSession(id: session.id)
       upsertSessionSummary(updatedSession)
+      connectionError = ""
+      showNotice(resumeSuccessNotice(for: updatedSession))
       await refreshDashboard()
       await loadSession(id: session.id)
     } catch {
       connectionError = error.localizedDescription
+      showNotice("接管失败：\(error.localizedDescription)", isError: true)
     }
   }
 
@@ -184,6 +206,19 @@ final class AppModel: ObservableObject {
     UserDefaults.standard.set(baseURLString, forKey: baseURLKey)
   }
 
+  private func showNotice(_ message: String, isError: Bool = false) {
+    noticeTask?.cancel()
+    operationNotice = message
+    operationNoticeIsError = isError
+    noticeTask = Task {
+      try? await Task.sleep(for: .seconds(3))
+      if !Task.isCancelled {
+        operationNotice = ""
+        operationNoticeIsError = false
+      }
+    }
+  }
+
   private func buildResult(for approval: PendingRequestView, action: ApprovalAction) -> JSONValue {
     switch approval.kind {
     case "command", "fileChange":
@@ -258,10 +293,103 @@ final class AppModel: ObservableObject {
 
     dashboard = DashboardResponse(
       agent: dashboard.agent,
+      agents: dashboard.agents,
+      defaultAgent: dashboard.defaultAgent,
       stats: dashboard.stats,
       sessions: sessions,
       approvals: dashboard.approvals
     )
+  }
+
+  var startAgentOptions: [AgentOption] {
+    dashboard.agents
+  }
+
+  var selectedAgentOption: AgentOption? {
+    dashboard.agents.first(where: { $0.id == selectedStartAgentID })
+  }
+
+  var selectedAgentApprovals: [PendingRequestView] {
+    let allowedSessionIDs = Set(
+      dashboard.sessions
+        .filter { $0.agentId == selectedStartAgentID }
+        .map(\.id)
+    )
+    return dashboard.approvals.filter { allowedSessionIDs.contains($0.threadId) }
+  }
+
+  func supportsApprovals(forSessionID sessionID: String) -> Bool {
+    guard let session = dashboard.sessions.first(where: { $0.id == sessionID }) else { return true }
+    return capabilities(for: session).supportsApprovals
+  }
+
+  func supportsResume(for session: SessionSummary) -> Bool {
+    canResume(session)
+  }
+
+  func supportsArchive(for session: SessionSummary) -> Bool {
+    capabilities(for: session).supportsArchive
+  }
+
+  func supportsInterruptTurn(for session: SessionSummary) -> Bool {
+    capabilities(for: session).supportsInterruptTurn
+  }
+
+  func capabilities(for session: SessionSummary) -> AgentCapabilities {
+    if let option = dashboard.agents.first(where: { $0.id == session.agentId }) {
+      return option.capabilities
+    }
+    return AgentCapabilities(
+      supportsInterruptTurn: true,
+      supportsApprovals: true,
+      supportsArchive: true,
+      supportsResume: true,
+      supportsHistoryImport: false
+    )
+  }
+
+  func canResume(_ session: SessionSummary) -> Bool {
+    capabilities(for: session).supportsResume && session.canResume
+  }
+
+  private func resumeSuccessNotice(for session: SessionSummary) -> String {
+    guard session.isClaudeSession else {
+      return "会话已接管，可继续发消息。"
+    }
+    switch session.runtimeAttachMode {
+    case "resumed_existing":
+      return "已接入现有 Claude runtime。"
+    case "opened_from_history":
+      return "已为这条 Claude 历史会话打开新的 runtime。"
+    case "new_session":
+      return "已打开新的 Claude runtime。"
+    default:
+      return "Claude 会话已接管。"
+    }
+  }
+
+  func setSelectedStartAgent(_ id: String) {
+    let normalized = id.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    guard !normalized.isEmpty else { return }
+    guard dashboard.agents.contains(where: { $0.id == normalized && $0.available }) else { return }
+    selectedStartAgentID = normalized
+  }
+
+  private func syncSelectedAgent(with dashboard: DashboardResponse) {
+    let normalizedCurrent = selectedStartAgentID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    let availableIDs = Set(dashboard.agents.filter(\.available).map(\.id))
+    if availableIDs.contains(normalizedCurrent) {
+      selectedStartAgentID = normalizedCurrent
+      return
+    }
+
+    let normalizedDefault = dashboard.defaultAgent.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    if availableIDs.contains(normalizedDefault) {
+      selectedStartAgentID = normalizedDefault
+      return
+    }
+
+    selectedStartAgentID = availableIDs.contains("codex") ? "codex" : (availableIDs.first ?? "codex")
   }
 }
 

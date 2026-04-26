@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -12,10 +13,16 @@ import (
 )
 
 type SessionRuntime struct {
-	LatestDiffByTurn map[string]string
-	LatestPlanByTurn map[string]codex.TurnPlanUpdatedNotification
-	CurrentTurnID    string
-	Ended            bool
+	LatestDiffByTurn  map[string]string
+	LatestPlanByTurn  map[string]codex.TurnPlanUpdatedNotification
+	CurrentTurnID     string
+	RuntimeAttachMode string
+	Ended             bool
+}
+
+type SessionBinding struct {
+	AgentID        string
+	AgentSessionID string
 }
 
 type SessionRecord struct {
@@ -45,12 +52,14 @@ type Store struct {
 	pending      map[string]*PendingRequest
 	endedState   map[string]bool
 	managedState map[string]bool
+	bindings     map[string]SessionBinding
 	localState   *LocalStateDB
 }
 
 func New(localState *LocalStateDB) (*Store, error) {
 	endedState := make(map[string]bool)
 	managedState := make(map[string]bool)
+	bindings := make(map[string]SessionBinding)
 	if localState != nil {
 		loadedState, err := localState.LoadSessionStates()
 		if err != nil {
@@ -63,6 +72,12 @@ func New(localState *LocalStateDB) (*Store, error) {
 			if state.Managed {
 				managedState[threadID] = true
 			}
+			if state.AgentID != "" || state.AgentSessionID != "" {
+				bindings[threadID] = SessionBinding{
+					AgentID:        state.AgentID,
+					AgentSessionID: state.AgentSessionID,
+				}
+			}
 		}
 	}
 
@@ -71,6 +86,7 @@ func New(localState *LocalStateDB) (*Store, error) {
 		pending:      make(map[string]*PendingRequest),
 		endedState:   endedState,
 		managedState: managedState,
+		bindings:     bindings,
 		localState:   localState,
 	}, nil
 }
@@ -85,14 +101,15 @@ func (s *Store) ReplaceSessions(threads []codex.Thread, loaded map[string]bool) 
 		if !ok {
 			existing = &SessionRecord{
 				Runtime: SessionRuntime{
-					LatestDiffByTurn: make(map[string]string),
-					LatestPlanByTurn: make(map[string]codex.TurnPlanUpdatedNotification),
-					Ended:            s.endedState[thread.ID],
+					LatestDiffByTurn:  make(map[string]string),
+					LatestPlanByTurn:  make(map[string]codex.TurnPlanUpdatedNotification),
+					RuntimeAttachMode: "",
+					Ended:             s.endedState[thread.ID],
 				},
 			}
 		}
 
-		existing.Thread = thread
+		existing.Thread = mergeThread(existing.Thread, thread)
 		existing.Loaded = loaded[thread.ID]
 		if existing.Runtime.LatestDiffByTurn == nil {
 			existing.Runtime.LatestDiffByTurn = make(map[string]string)
@@ -114,14 +131,15 @@ func (s *Store) UpsertThread(thread codex.Thread) {
 	if !ok {
 		record = &SessionRecord{
 			Runtime: SessionRuntime{
-				LatestDiffByTurn: make(map[string]string),
-				LatestPlanByTurn: make(map[string]codex.TurnPlanUpdatedNotification),
-				Ended:            s.endedState[thread.ID],
+				LatestDiffByTurn:  make(map[string]string),
+				LatestPlanByTurn:  make(map[string]codex.TurnPlanUpdatedNotification),
+				RuntimeAttachMode: "",
+				Ended:             s.endedState[thread.ID],
 			},
 		}
 		s.sessions[thread.ID] = record
 	}
-	record.Thread = thread
+	record.Thread = mergeThread(record.Thread, thread)
 }
 
 func (s *Store) SetSessionEnded(threadID string, ended bool) {
@@ -164,6 +182,7 @@ func (s *Store) DeleteSessionLocalState(threadID string) {
 	}
 	delete(s.endedState, threadID)
 	delete(s.managedState, threadID)
+	delete(s.bindings, threadID)
 	localState := s.localState
 	s.mu.Unlock()
 
@@ -185,12 +204,65 @@ func (s *Store) ManagedSessionIDs() []string {
 	return ids
 }
 
+func (s *Store) HasLocalSessionState(threadID string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return false
+	}
+	return s.endedState[threadID] || s.managedState[threadID]
+}
+
 func (s *Store) SetSessionLoaded(threadID string, loaded bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	record := s.ensureSessionLocked(threadID)
 	record.Loaded = loaded
+}
+
+func (s *Store) SetRuntimeAttachMode(threadID, mode string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	record := s.ensureSessionLocked(threadID)
+	record.Runtime.RuntimeAttachMode = strings.TrimSpace(mode)
+}
+
+func (s *Store) SetSessionBinding(threadID, agentID, agentSessionID string) {
+	s.mu.Lock()
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		s.mu.Unlock()
+		return
+	}
+	_ = s.ensureSessionLocked(threadID)
+
+	trimmedAgentID := strings.TrimSpace(agentID)
+	trimmedAgentSessionID := strings.TrimSpace(agentSessionID)
+	if trimmedAgentID == "" && trimmedAgentSessionID == "" {
+		delete(s.bindings, threadID)
+	} else {
+		s.bindings[threadID] = SessionBinding{
+			AgentID:        trimmedAgentID,
+			AgentSessionID: trimmedAgentSessionID,
+		}
+	}
+	persisted := s.persistedStateLocked(threadID)
+	localState := s.localState
+	s.mu.Unlock()
+
+	_ = localState.SaveSessionState(threadID, persisted)
+}
+
+func (s *Store) SessionBinding(threadID string) (SessionBinding, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	binding, ok := s.bindings[strings.TrimSpace(threadID)]
+	return binding, ok
 }
 
 func (s *Store) UpdateThreadStatus(threadID string, status codex.ThreadStatus) {
@@ -230,9 +302,10 @@ func (s *Store) ensureSessionLocked(threadID string) *SessionRecord {
 	record = &SessionRecord{
 		Thread: codex.Thread{ID: threadID},
 		Runtime: SessionRuntime{
-			LatestDiffByTurn: make(map[string]string),
-			LatestPlanByTurn: make(map[string]codex.TurnPlanUpdatedNotification),
-			Ended:            s.endedState[threadID],
+			LatestDiffByTurn:  make(map[string]string),
+			LatestPlanByTurn:  make(map[string]codex.TurnPlanUpdatedNotification),
+			RuntimeAttachMode: "",
+			Ended:             s.endedState[threadID],
 		},
 	}
 	s.sessions[threadID] = record
@@ -240,9 +313,12 @@ func (s *Store) ensureSessionLocked(threadID string) *SessionRecord {
 }
 
 func (s *Store) persistedStateLocked(threadID string) PersistedSessionState {
+	binding := s.bindings[threadID]
 	return PersistedSessionState{
-		Ended:   s.endedState[threadID],
-		Managed: s.managedState[threadID],
+		Ended:          s.endedState[threadID],
+		Managed:        s.managedState[threadID],
+		AgentID:        binding.AgentID,
+		AgentSessionID: binding.AgentSessionID,
 	}
 }
 
@@ -390,6 +466,20 @@ func summarize(method string, params map[string]any) string {
 	case "item/permissions/requestApproval":
 		return "Additional permissions requested"
 	case "item/tool/requestUserInput":
+		if questions, ok := params["questions"].([]any); ok {
+			for _, value := range questions {
+				object, ok := value.(map[string]any)
+				if !ok {
+					continue
+				}
+				if question, ok := object["question"].(string); ok && strings.TrimSpace(question) != "" {
+					return strings.TrimSpace(question)
+				}
+				if prompt, ok := object["prompt"].(string); ok && strings.TrimSpace(prompt) != "" {
+					return strings.TrimSpace(prompt)
+				}
+			}
+		}
 		return "Agent is waiting for structured user input"
 	default:
 		return method
@@ -410,10 +500,11 @@ func cloneSessionRecord(record SessionRecord) SessionRecord {
 	cloned := record
 	cloned.Thread = cloneThread(record.Thread)
 	cloned.Runtime = SessionRuntime{
-		LatestDiffByTurn: make(map[string]string, len(record.Runtime.LatestDiffByTurn)),
-		LatestPlanByTurn: make(map[string]codex.TurnPlanUpdatedNotification, len(record.Runtime.LatestPlanByTurn)),
-		CurrentTurnID:    record.Runtime.CurrentTurnID,
-		Ended:            record.Runtime.Ended,
+		LatestDiffByTurn:  make(map[string]string, len(record.Runtime.LatestDiffByTurn)),
+		LatestPlanByTurn:  make(map[string]codex.TurnPlanUpdatedNotification, len(record.Runtime.LatestPlanByTurn)),
+		CurrentTurnID:     record.Runtime.CurrentTurnID,
+		RuntimeAttachMode: record.Runtime.RuntimeAttachMode,
+		Ended:             record.Runtime.Ended,
 	}
 	for key, value := range record.Runtime.LatestDiffByTurn {
 		cloned.Runtime.LatestDiffByTurn[key] = value
@@ -437,4 +528,65 @@ func clonePending(request PendingRequest) PendingRequest {
 	cloned.Params = cloneMap(request.Params)
 	cloned.RawRPCRequestID = slices.Clone(request.RawRPCRequestID)
 	return cloned
+}
+
+func mergeThread(existing, incoming codex.Thread) codex.Thread {
+	merged := incoming
+
+	if len(merged.Turns) == 0 && len(existing.Turns) > 0 {
+		merged.Turns = cloneTurns(existing.Turns)
+	}
+	if strings.TrimSpace(merged.Preview) == "" && strings.TrimSpace(existing.Preview) != "" {
+		merged.Preview = existing.Preview
+	}
+	if strings.TrimSpace(merged.CWD) == "" && strings.TrimSpace(existing.CWD) != "" {
+		merged.CWD = existing.CWD
+	}
+	if merged.CreatedAt == 0 && existing.CreatedAt > 0 {
+		merged.CreatedAt = existing.CreatedAt
+	}
+	if merged.UpdatedAt == 0 && existing.UpdatedAt > 0 {
+		merged.UpdatedAt = existing.UpdatedAt
+	}
+	if len(merged.Source) == 0 && len(existing.Source) > 0 {
+		merged.Source = slices.Clone(existing.Source)
+	}
+	if merged.Path == nil || strings.TrimSpace(*merged.Path) == "" {
+		merged.Path = cloneStringPtr(existing.Path)
+	}
+	if merged.RuntimeSessionID == nil || strings.TrimSpace(*merged.RuntimeSessionID) == "" {
+		merged.RuntimeSessionID = cloneStringPtr(existing.RuntimeSessionID)
+	}
+	if merged.Name == nil || strings.TrimSpace(*merged.Name) == "" {
+		merged.Name = cloneStringPtr(existing.Name)
+	}
+	if merged.AgentNickname == nil || strings.TrimSpace(*merged.AgentNickname) == "" {
+		merged.AgentNickname = cloneStringPtr(existing.AgentNickname)
+	}
+	if merged.AgentRole == nil || strings.TrimSpace(*merged.AgentRole) == "" {
+		merged.AgentRole = cloneStringPtr(existing.AgentRole)
+	}
+	if len(merged.GitInfo) == 0 && len(existing.GitInfo) > 0 {
+		merged.GitInfo = cloneMap(existing.GitInfo)
+	}
+
+	return merged
+}
+
+func cloneTurns(turns []codex.Turn) []codex.Turn {
+	if len(turns) == 0 {
+		return nil
+	}
+	data, _ := json.Marshal(turns)
+	var cloned []codex.Turn
+	_ = json.Unmarshal(data, &cloned)
+	return cloned
+}
+
+func cloneStringPtr(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
 }

@@ -2,12 +2,43 @@ import Foundation
 
 struct DashboardResponse: Codable, Hashable {
   let agent: AgentSnapshot
+  let agents: [AgentOption]
+  let defaultAgent: String
   let stats: DashboardStats
   let sessions: [SessionSummary]
   let approvals: [PendingRequestView]
 
   static let placeholder = DashboardResponse(
     agent: .init(connected: false, startedAt: Date(), listenAddr: "", codexBinaryPath: "codex"),
+    agents: [
+      .init(
+        id: "codex",
+        name: "Codex",
+        available: true,
+        default: true,
+        capabilities: .init(
+          supportsInterruptTurn: true,
+          supportsApprovals: true,
+          supportsArchive: true,
+          supportsResume: true,
+          supportsHistoryImport: false
+        )
+      ),
+      .init(
+        id: "claude",
+        name: "Claude Code",
+        available: false,
+        default: false,
+        capabilities: .init(
+          supportsInterruptTurn: true,
+          supportsApprovals: true,
+          supportsArchive: true,
+          supportsResume: true,
+          supportsHistoryImport: true
+        )
+      ),
+    ],
+    defaultAgent: "codex",
     stats: .init(totalSessions: 0, loadedSessions: 0, activeSessions: 0, pendingApprovals: 0),
     sessions: [],
     approvals: []
@@ -21,6 +52,22 @@ struct AgentSnapshot: Codable, Hashable {
   let codexBinaryPath: String
 }
 
+struct AgentOption: Codable, Hashable {
+  let id: String
+  let name: String
+  let available: Bool
+  let `default`: Bool
+  let capabilities: AgentCapabilities
+}
+
+struct AgentCapabilities: Codable, Hashable {
+  let supportsInterruptTurn: Bool
+  let supportsApprovals: Bool
+  let supportsArchive: Bool
+  let supportsResume: Bool
+  let supportsHistoryImport: Bool
+}
+
 struct DashboardStats: Codable, Hashable {
   let totalSessions: Int
   let loadedSessions: Int
@@ -30,6 +77,7 @@ struct DashboardStats: Codable, Hashable {
 
 struct SessionSummary: Codable, Hashable, Identifiable {
   let id: String
+  let agentId: String
   let name: String
   let preview: String
   let cwd: String
@@ -46,6 +94,12 @@ struct SessionSummary: Codable, Hashable, Identifiable {
   let lastTurnStatus: String
   let agentNickname: String
   let agentRole: String
+  let lifecycleStage: String
+  let historyAvailable: Bool
+  let runtimeAvailable: Bool
+  let runtimeAttachMode: String
+  let resumeAvailable: Bool
+  let resumeBlockedReason: String
   let ended: Bool
 
   var displayName: String {
@@ -82,6 +136,26 @@ struct SessionSummary: Codable, Hashable, Identifiable {
 
   var isEnded: Bool {
     ended
+  }
+
+  var canResume: Bool {
+    resumeAvailable
+  }
+
+  var isClaudeSession: Bool {
+    agentId == "claude"
+  }
+
+  var isRuntimeDiscoverable: Bool {
+    runtimeAvailable
+  }
+
+  var isHistoryDiscoverable: Bool {
+    historyAvailable
+  }
+
+  var isManagedStage: Bool {
+    lifecycleStage == "managed"
   }
 
   var hasWaitingState: Bool {

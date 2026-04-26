@@ -55,8 +55,12 @@ class AppModel extends ChangeNotifier {
   bool isAgentOnline = false;
   String agentConnectionError = '';
   String connectionError = '';
+  String operationNotice = '';
+  bool operationNoticeIsError = false;
   String composerDraft = '';
+  String selectedStartAgentId = 'codex';
   int _consecutiveDashboardFailures = 0;
+  Timer? _noticeTimer;
 
   ApiClient _client() => ApiClient(baseUrlString: baseUrlString);
 
@@ -88,6 +92,7 @@ class AppModel extends ChangeNotifier {
     try {
       final latestDashboard = await _client().dashboard();
       dashboard = latestDashboard;
+      _syncSelectedAgent(latestDashboard);
       _consecutiveDashboardFailures = 0;
       isAgentOnline = latestDashboard.agent.connected;
       agentConnectionError = '';
@@ -104,6 +109,9 @@ class AppModel extends ChangeNotifier {
   }
 
   List<PendingRequestView> approvalsFor(String sessionId) {
+    if (!supportsApprovalsForSessionId(sessionId)) {
+      return <PendingRequestView>[];
+    }
     final approvals = dashboard.approvals
         .where((item) => item.threadId == sessionId)
         .toList()
@@ -126,29 +134,48 @@ class AppModel extends ChangeNotifier {
   Future<bool> startSession({
     required String cwd,
     required String prompt,
+    required String agentId,
   }) async {
     try {
-      await _client().startSession(
+      final createdSession = await _client().startSession(
         cwd: cwd.trim(),
         prompt: prompt.trim(),
+        agentId: agentId.trim().toLowerCase(),
       );
+      _upsertSessionSummary(createdSession);
+      connectionError = '';
+      showNotice('会话已创建。');
       await refreshDashboard();
+      await loadSession(createdSession.id);
       return true;
     } catch (error) {
       connectionError = error.toString();
+      showNotice('创建会话失败：${error.toString()}', isError: true);
       notifyListeners();
       return false;
     }
   }
 
   Future<void> resumeSession(SessionSummary session) async {
+    if (!canResumeSession(session)) {
+      final message = session.resumeBlockedReason.isNotEmpty
+          ? session.resumeBlockedReason
+          : '这个会话当前不能重新接管。';
+      connectionError = message;
+      showNotice(message, isError: true);
+      notifyListeners();
+      return;
+    }
     try {
       final updatedSession = await _client().resumeSession(session.id);
       _upsertSessionSummary(updatedSession);
+      connectionError = '';
+      showNotice(_resumeSuccessNotice(updatedSession));
       await refreshDashboard();
       await loadSession(session.id);
     } catch (error) {
       connectionError = error.toString();
+      showNotice('接管失败：${error.toString()}', isError: true);
       notifyListeners();
     }
   }
@@ -342,10 +369,129 @@ class AppModel extends ChangeNotifier {
 
     dashboard = DashboardResponse(
       agent: dashboard.agent,
+      agents: dashboard.agents,
+      defaultAgent: dashboard.defaultAgent,
       stats: dashboard.stats,
       sessions: sessions,
       approvals: dashboard.approvals,
     );
     notifyListeners();
+  }
+
+  List<AgentOption> get startAgentOptions => dashboard.agents;
+
+  AgentOption? get selectedAgentOption {
+    for (final option in dashboard.agents) {
+      if (option.id == selectedStartAgentId) {
+        return option;
+      }
+    }
+    return null;
+  }
+
+  List<PendingRequestView> get selectedAgentApprovals {
+    final allowedSessionIds = dashboard.sessions
+        .where((session) => session.agentId == selectedStartAgentId)
+        .map((session) => session.id)
+        .toSet();
+    return dashboard.approvals
+        .where((approval) => allowedSessionIds.contains(approval.threadId))
+        .toList();
+  }
+
+  AgentCapabilities capabilitiesForSession(SessionSummary session) {
+    for (final option in dashboard.agents) {
+      if (option.id == session.agentId) {
+        return option.capabilities;
+      }
+    }
+    return AgentCapabilities(
+      supportsInterruptTurn: true,
+      supportsApprovals: true,
+      supportsArchive: true,
+      supportsResume: true,
+      supportsHistoryImport: false,
+    );
+  }
+
+  bool canResumeSession(SessionSummary session) {
+    return capabilitiesForSession(session).supportsResume && session.canResume;
+  }
+
+  String _resumeSuccessNotice(SessionSummary session) {
+    if (!session.isClaudeSession) {
+      return '会话已接管，可继续发消息。';
+    }
+    switch (session.runtimeAttachMode) {
+      case 'resumed_existing':
+        return '已接入现有 Claude runtime。';
+      case 'opened_from_history':
+        return '已为这条 Claude 历史会话打开新的 runtime。';
+      case 'new_session':
+        return '已打开新的 Claude runtime。';
+      default:
+        return 'Claude 会话已接管。';
+    }
+  }
+
+  void showNotice(String message, {bool isError = false}) {
+    _noticeTimer?.cancel();
+    operationNotice = message;
+    operationNoticeIsError = isError;
+    notifyListeners();
+    _noticeTimer = Timer(const Duration(seconds: 3), () {
+      operationNotice = '';
+      operationNoticeIsError = false;
+      notifyListeners();
+    });
+  }
+
+  bool supportsApprovalsForSessionId(String sessionId) {
+    SessionSummary? target;
+    for (final session in dashboard.sessions) {
+      if (session.id == sessionId) {
+        target = session;
+        break;
+      }
+    }
+    if (target == null) {
+      return true;
+    }
+    return capabilitiesForSession(target).supportsApprovals;
+  }
+
+  void setSelectedStartAgent(String id) {
+    final normalized = id.trim().toLowerCase();
+    if (normalized.isEmpty) {
+      return;
+    }
+    final exists = dashboard.agents
+        .any((item) => item.id == normalized && item.available);
+    if (!exists) {
+      return;
+    }
+    selectedStartAgentId = normalized;
+    notifyListeners();
+  }
+
+  void _syncSelectedAgent(DashboardResponse latestDashboard) {
+    final availableIds = latestDashboard.agents
+        .where((item) => item.available)
+        .map((item) => item.id)
+        .toSet();
+
+    if (availableIds.contains(selectedStartAgentId)) {
+      return;
+    }
+
+    final normalizedDefault = latestDashboard.defaultAgent.trim().toLowerCase();
+    if (availableIds.contains(normalizedDefault)) {
+      selectedStartAgentId = normalizedDefault;
+      return;
+    }
+
+    selectedStartAgentId = availableIds.contains('codex')
+        ? 'codex'
+        : (availableIds.isNotEmpty ? availableIds.first : 'codex');
   }
 }

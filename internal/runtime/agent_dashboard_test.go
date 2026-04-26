@@ -59,3 +59,60 @@ func TestDashboardLoadedSessionsExcludeEndedSessions(t *testing.T) {
 		}
 	}
 }
+
+func TestEndedSessionSummaryForcesIdleStatus(t *testing.T) {
+	sessionStore, err := store.New(nil)
+	if err != nil {
+		t.Fatalf("create session store: %v", err)
+	}
+
+	sessionStore.ReplaceSessions([]codex.Thread{
+		{
+			ID:            "ended-thread",
+			ModelProvider: "OpenAI",
+			CreatedAt:     100,
+			UpdatedAt:     200,
+			Status:        codex.ThreadStatus{Type: "active"},
+			CWD:           "/tmp/ended",
+		},
+	}, map[string]bool{
+		"ended-thread": true,
+	})
+	sessionStore.SetSessionEnded("ended-thread", true)
+
+	record, ok := sessionStore.SnapshotSession("ended-thread")
+	if !ok {
+		t.Fatalf("SnapshotSession() missing record")
+	}
+
+	summary := toSessionSummary(record, 0)
+	if got := summary.Status; got != "idle" {
+		t.Fatalf("summary.Status = %q, want %q", got, "idle")
+	}
+}
+
+func TestSessionSummaryIncludesRuntimeAttachMode(t *testing.T) {
+	sessionStore, err := store.New(nil)
+	if err != nil {
+		t.Fatalf("create session store: %v", err)
+	}
+
+	sessionStore.UpsertThread(codex.Thread{
+		ID:            "claude:thread-1",
+		ModelProvider: "Anthropic",
+		CreatedAt:     100,
+		UpdatedAt:     200,
+		Status:        codex.ThreadStatus{Type: "idle", ActiveFlags: []string{"claudeRuntimeAvailable"}},
+		CWD:           "/tmp/claude",
+	})
+	sessionStore.SetRuntimeAttachMode("claude:thread-1", "resumed_existing")
+
+	record, ok := sessionStore.SnapshotSession("claude:thread-1")
+	if !ok {
+		t.Fatalf("SnapshotSession() missing record")
+	}
+	summary := toSessionSummary(record, 0)
+	if got := summary.RuntimeAttachMode; got != "resumed_existing" {
+		t.Fatalf("summary.RuntimeAttachMode = %q, want %q", got, "resumed_existing")
+	}
+}

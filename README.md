@@ -50,6 +50,7 @@ Client Apps
 
 - 直接启动并连接本机 `codex app-server`
 - 自动发现真实的 Codex 历史会话
+- 自动发现 Claude 历史 transcript 与本机 live runtime
 - 读取 `thread/list`、`thread/read`、`thread/loaded/list`
 - 支持新建受控会话
 - 支持重新接管历史会话
@@ -61,7 +62,7 @@ Client Apps
 ### iOS App
 
 - 会话总览页
-- 已接管 / 已结束 / 历史会话分组
+- 已接管 / 已结束 / 可接管 Runtime / 历史导入分组
 - 总会话、已加载、运行中、待审批统计
 - 会话详情页
 - plan / diff / timeline 展示
@@ -77,6 +78,7 @@ Client Apps
 - 会话详情页
 - 审批中心
 - 设置页 / Agent 地址配置
+- Claude 会话显示 `History / Runtime` 与 `现有 Runtime / 历史新开 / 新建 Runtime` 状态
 - Android / Web / 桌面端 runner 已补齐
 - 已适配浏览器跨域访问本地 Agent
 
@@ -106,9 +108,16 @@ Client Apps
 
 - Agent 可以连上本机 Codex CLI
 - `dashboard` API 能返回真实会话数据
+- Claude 会话生命周期已经拆分为 `managed / runtime_available / history_only / ended`
 - iOS 客户端可以消费真实数据并进行操作
 - Flutter Web 客户端可以通过浏览器访问本地 Agent
 - Flutter Android 客户端可以在模拟器中访问局域网 Agent
+
+最近这次更新主要包括：
+
+- Claude 会话分层：把 `历史导入` 和 `可接管 runtime` 正式拆开
+- 新建 / 接管 / 结束会话统一进入明确的生命周期阶段
+- Agent 三端打包、Flutter Web / Android 打包、iOS `unsigned ipa` 导出流程验证
 
 当前还没有做的部分：
 
@@ -370,6 +379,15 @@ assets                    README 截图资源
   <tr>
     <td><img src="assets/screenshot-09.jpeg" alt="Screenshot 09" width="240"></td>
     <td></td>
+  </tr>
+</table>
+
+### Claude
+
+<table>
+  <tr>
+    <td><img src="assets/screenshot_claude_01.jpeg" alt="Claude Screenshot 01" width="240"></td>
+    <td><img src="assets/screenshot_claude_02.jpeg" alt="Claude Screenshot 02" width="240"></td>
   </tr>
 </table>
 

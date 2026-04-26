@@ -9,6 +9,7 @@ import (
 type Config struct {
 	ListenAddr      string
 	CodexPath       string
+	ClaudePath      string
 	RefreshInterval time.Duration
 	StateDBPath     string
 }
@@ -17,6 +18,7 @@ func Load() Config {
 	return Config{
 		ListenAddr:      getenv("CODEXFLOW_LISTEN_ADDR", "127.0.0.1:4318"),
 		CodexPath:       getenv("CODEXFLOW_CODEX_PATH", "codex"),
+		ClaudePath:      getenv("CODEXFLOW_CLAUDE_PATH", "claude"),
 		RefreshInterval: getDurationEnv("CODEXFLOW_REFRESH_INTERVAL", 12*time.Second),
 		StateDBPath:     getenv("CODEXFLOW_STATE_DB_PATH", defaultStateDBPath()),
 	}

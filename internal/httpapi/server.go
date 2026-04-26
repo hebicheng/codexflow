@@ -74,6 +74,7 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 			Action string `json:"action"`
 			CWD    string `json:"cwd"`
 			Prompt string `json:"prompt"`
+			Agent  string `json:"agent"`
 		}
 		if !decodeJSON(w, r, &request) {
 			return
@@ -105,7 +106,7 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 				writeErrorMessage(w, http.StatusBadRequest, "first prompt is required to materialize a managed session")
 				return
 			}
-			session, err := s.agent.StartSession(ctx, cwd, prompt)
+			session, err := s.agent.StartSession(ctx, cwd, prompt, request.Agent)
 			if err != nil {
 				writeError(w, http.StatusBadGateway, err)
 				return

@@ -13,16 +13,56 @@ struct DashboardView: View {
     model.isAgentOnline
   }
 
+  private var selectedAgentID: String {
+    model.selectedStartAgentID
+  }
+
+  private var filteredSessions: [SessionSummary] {
+    model.dashboard.sessions.filter { $0.agentId == selectedAgentID }
+  }
+
+  private var filteredApprovals: [PendingRequestView] {
+    let allowedSessionIDs = Set(filteredSessions.map(\.id))
+    return model.dashboard.approvals.filter { allowedSessionIDs.contains($0.threadId) }
+  }
+
+  private var filteredStats: DashboardStats {
+    var loaded = 0
+    var active = 0
+    for session in filteredSessions {
+      if session.loaded {
+        loaded += 1
+      }
+      if session.status == "active" && !session.ended {
+        active += 1
+      }
+    }
+    return DashboardStats(
+      totalSessions: filteredSessions.count,
+      loadedSessions: loaded,
+      activeSessions: active,
+      pendingApprovals: filteredApprovals.count
+    )
+  }
+
   private var managedSessions: [SessionSummary] {
-    model.dashboard.sessions.filter { $0.loaded && !$0.isEnded }
+    filteredSessions.filter { $0.lifecycleStage == "managed" }
   }
 
   private var endedSessions: [SessionSummary] {
-    model.dashboard.sessions.filter { $0.isEnded }
+    filteredSessions.filter { $0.lifecycleStage == "ended" }
   }
 
   private var historySessions: [SessionSummary] {
-    model.dashboard.sessions.filter { !$0.loaded && !$0.isEnded }
+    filteredSessions.filter { $0.lifecycleStage == "history_only" }
+  }
+
+  private var runtimeSessions: [SessionSummary] {
+    filteredSessions.filter { $0.lifecycleStage == "runtime_available" }
+  }
+
+  private var selectedAgentOption: AgentOption? {
+    model.startAgentOptions.first { $0.id == model.selectedStartAgentID }
   }
 
   var body: some View {
@@ -34,10 +74,13 @@ struct DashboardView: View {
           VStack(spacing: 12) {
             dashboardStatusRow
             metrics
+            if !model.operationNotice.isEmpty {
+              noticeBanner
+            }
             if !isConnected && !model.agentConnectionError.isEmpty {
               connectionIssueBanner
             }
-            if model.dashboard.stats.pendingApprovals > 0 {
+            if filteredStats.pendingApprovals > 0 {
               approvalsBanner
             }
             sessionSection
@@ -69,10 +112,58 @@ struct DashboardView: View {
       .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
   }
 
+  private var noticeBanner: some View {
+    Text(model.operationNotice)
+      .font(.system(.caption, design: .rounded))
+      .foregroundStyle(model.operationNoticeIsError ? Palette.danger : Palette.success)
+      .padding(.horizontal, 12)
+      .padding(.vertical, 10)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .background((model.operationNoticeIsError ? Palette.danger : Palette.success).opacity(0.08))
+      .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+  }
+
   private var dashboardStatusRow: some View {
     HStack {
-      Spacer()
+      agentSwitchButton
+      Spacer(minLength: 10)
       AgentStatusBadge(connected: isConnected)
+    }
+  }
+
+  private var agentSwitchButton: some View {
+    Menu {
+      ForEach(model.startAgentOptions, id: \.id) { option in
+        Button {
+          model.setSelectedStartAgent(option.id)
+        } label: {
+          HStack {
+            Text(option.name)
+            if option.id == model.selectedStartAgentID {
+              Image(systemName: "checkmark")
+            }
+          }
+        }
+        .disabled(!option.available)
+      }
+    } label: {
+      HStack(spacing: 6) {
+        Image(systemName: "person.2.wave.2")
+          .font(.system(size: 12, weight: .semibold))
+        Text(selectedAgentOption?.name ?? "Codex")
+          .font(.system(.caption, design: .rounded, weight: .semibold))
+        Image(systemName: "chevron.down")
+          .font(.system(size: 10, weight: .semibold))
+      }
+      .foregroundStyle(Palette.ink)
+      .padding(.horizontal, 10)
+      .padding(.vertical, 8)
+      .background(Color.white.opacity(0.78))
+      .clipShape(Capsule())
+      .overlay {
+        Capsule()
+          .stroke(Palette.line, lineWidth: 1)
+      }
     }
   }
 
@@ -97,10 +188,10 @@ struct DashboardView: View {
 
   private var metrics: some View {
     LazyVGrid(columns: metricsColumns, spacing: 10) {
-      MetricCard(title: "总会话", value: "\(model.dashboard.stats.totalSessions)", tone: Palette.softBlue)
-      MetricCard(title: "已加载", value: "\(model.dashboard.stats.loadedSessions)", tone: Palette.accent)
-      MetricCard(title: "运行中", value: "\(model.dashboard.stats.activeSessions)", tone: Palette.accent2)
-      MetricCard(title: "待审批", value: "\(model.dashboard.stats.pendingApprovals)", tone: Palette.warning)
+      MetricCard(title: "总会话", value: "\(filteredStats.totalSessions)", tone: Palette.softBlue)
+      MetricCard(title: "已加载", value: "\(filteredStats.loadedSessions)", tone: Palette.accent)
+      MetricCard(title: "运行中", value: "\(filteredStats.activeSessions)", tone: Palette.accent2)
+      MetricCard(title: "待审批", value: "\(filteredStats.pendingApprovals)", tone: Palette.warning)
     }
   }
 
@@ -110,7 +201,7 @@ struct DashboardView: View {
         Image(systemName: "exclamationmark.triangle.fill")
           .foregroundStyle(Palette.warning)
 
-        Text("当前有 \(model.dashboard.stats.pendingApprovals) 个审批等待处理。")
+        Text("当前有 \(filteredStats.pendingApprovals) 个审批等待处理。")
           .font(.system(.footnote, design: .rounded, weight: .medium))
           .foregroundStyle(Palette.warning)
       }
@@ -125,7 +216,7 @@ struct DashboardView: View {
             .font(.system(.headline, design: .rounded, weight: .semibold))
             .foregroundStyle(Palette.ink)
 
-          Text("\(model.dashboard.sessions.count)")
+          Text("\(filteredSessions.count)")
             .font(.system(.caption, design: .rounded, weight: .semibold))
             .foregroundStyle(Palette.mutedInk)
         }
@@ -135,7 +226,7 @@ struct DashboardView: View {
         createSessionButton
       }
 
-      if model.dashboard.sessions.isEmpty {
+      if filteredSessions.isEmpty {
         PanelCard(compact: true) {
           Text("暂时没有会话。先确认 Agent 已连接，或者点上方“新建”。")
             .font(.system(.footnote, design: .rounded))
@@ -156,10 +247,23 @@ struct DashboardView: View {
           )
         }
 
+        if !runtimeSessions.isEmpty {
+          sessionGroup(
+            title: selectedAgentID == "claude" ? "可接管 Runtime" : "待接管",
+            helper: selectedAgentID == "claude"
+              ? "这些 Claude 会话当前在本机 runtime 中可见。接管后，CodexFlow 才能继续刷新状态、处理中断和后续操作。"
+              : "这些会话当前未接管，但运行时仍可继续接管。",
+            sessions: runtimeSessions
+          )
+        }
+
         if !historySessions.isEmpty {
           sessionGroup(
-            title: "历史会话",
-            helper: "这些只是已发现的真实会话记录。先接管，才可以继续执行、处理中断和后续审批。", sessions: historySessions
+            title: selectedAgentID == "claude" ? "历史导入" : "历史会话",
+            helper: selectedAgentID == "claude"
+              ? "这些 Claude 会话目前只发现了历史 transcript。可以查看历史，但不代表当前存在可接管 runtime。"
+              : "这些只是已发现的真实会话记录。先接管，才可以继续执行、处理中断和后续审批。",
+            sessions: historySessions
           )
         }
       }
@@ -199,6 +303,10 @@ private struct SessionRow: View {
     model.approvals(for: session.id)
   }
 
+  private var capabilities: AgentCapabilities {
+    model.capabilities(for: session)
+  }
+
   var body: some View {
     SessionCard(session: session, onOpen: {
       showDetail = true
@@ -229,18 +337,22 @@ private struct SessionRow: View {
               )
             }
             .buttonStyle(.plain)
+            .disabled(!model.canResume(session))
+            .opacity(model.canResume(session) ? 1 : 0.45)
           } else if !session.loaded {
             Button {
               Task { await model.resumeSession(session) }
             } label: {
               rowButtonLabel(
-                "接管到 CodexFlow",
+                (session.isClaudeSession && !session.runtimeAvailable) ? "当前无 Runtime" : "接管到 CodexFlow",
                 background: Palette.softBlue,
                 foreground: .white,
                 border: .clear
               )
             }
             .buttonStyle(.plain)
+            .disabled(!model.canResume(session))
+            .opacity(model.canResume(session) ? 1 : 0.45)
           } else {
             Button {
               Task { await model.endSession(session) }
@@ -256,7 +368,7 @@ private struct SessionRow: View {
           }
         }
 
-        if session.pendingApprovals > 0 {
+        if capabilities.supportsApprovals && session.pendingApprovals > 0 {
           Button {
             showApprovals = true
           } label: {
@@ -270,7 +382,7 @@ private struct SessionRow: View {
           .buttonStyle(.plain)
         }
 
-        if !session.loaded || session.isEnded {
+        if capabilities.supportsArchive && (!session.loaded || session.isEnded) {
           Button {
             Task { await model.archiveSession(session) }
           } label: {
@@ -468,7 +580,7 @@ private struct NewSessionSheet: View {
                   Task {
                     isCreating = true
                     submitError = ""
-                    if await model.startSession(cwd: trimmedCWD, prompt: trimmedPrompt) {
+                    if await model.startSession(cwd: trimmedCWD, prompt: trimmedPrompt, agentID: model.selectedStartAgentID) {
                       isCreating = false
                       dismiss()
                     } else {

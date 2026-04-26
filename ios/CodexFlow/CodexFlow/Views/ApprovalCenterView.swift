@@ -4,6 +4,9 @@ struct ApprovalCenterView: View {
   @EnvironmentObject private var model: AppModel
 
   var body: some View {
+    let approvals = model.selectedAgentApprovals
+    let supportsApprovals = model.selectedAgentOption?.capabilities.supportsApprovals ?? true
+
     NavigationStack {
       ZStack {
         AtmosphereBackground()
@@ -11,19 +14,19 @@ struct ApprovalCenterView: View {
         ScrollView {
           VStack(spacing: 12) {
             PanelCard(compact: true) {
-              Text("这里处理 Codex 发来的命令审批、文件变更审批、权限审批，以及需要你回答的问题。")
+              Text(supportsApprovals ? "这里处理当前 Agent 发来的命令审批、文件变更审批、权限审批，以及需要你回答的问题。" : "当前 Agent 不提供审批事件流，这里暂时不会出现待审批项目。")
                 .font(.system(.footnote, design: .rounded))
                 .foregroundStyle(Palette.mutedInk)
             }
 
-            if model.dashboard.approvals.isEmpty {
+            if approvals.isEmpty {
               PanelCard(compact: true) {
-                Text("当前没有待处理审批。")
+                Text(supportsApprovals ? "当前没有待处理审批。" : "当前 Agent 不支持审批能力。")
                   .font(.system(.footnote, design: .rounded))
                   .foregroundStyle(Palette.mutedInk)
               }
             } else {
-              ApprovalList(approvals: model.dashboard.approvals, showSessionLabel: true)
+              ApprovalList(approvals: approvals, showSessionLabel: true)
             }
           }
           .padding(.horizontal, 16)

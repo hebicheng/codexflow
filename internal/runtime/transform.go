@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"codexflow/internal/codex"
@@ -18,26 +19,84 @@ func toSessionSummary(record store.SessionRecord, pendingApprovals int) SessionS
 	}
 
 	effectiveLoaded := record.Loaded && !record.Runtime.Ended
+	effectiveStatus := record.Thread.Status.Type
+	if record.Runtime.Ended {
+		effectiveStatus = "idle"
+	}
+	historyAvailable := sessionHistoryAvailable(record)
+	runtimeAvailable := sessionRuntimeAvailable(record)
+	resumeAvailable, resumeBlockedReason := resumeAvailability(record)
+	lifecycleStage := deriveLifecycleStage(record, historyAvailable, runtimeAvailable)
 
 	return SessionSummary{
-		ID:               record.Thread.ID,
-		Name:             optionalString(record.Thread.Name),
-		Preview:          record.Thread.Preview,
-		CWD:              record.Thread.CWD,
-		Source:           codex.SourceLabel(record.Thread.Source),
-		Status:           record.Thread.Status.Type,
-		ActiveFlags:      cloneStrings(record.Thread.Status.ActiveFlags),
-		Loaded:           effectiveLoaded,
-		UpdatedAt:        record.Thread.UpdatedAt,
-		CreatedAt:        record.Thread.CreatedAt,
-		ModelProvider:    record.Thread.ModelProvider,
-		Branch:           codex.GitBranch(record.Thread.GitInfo),
-		PendingApprovals: pendingApprovals,
-		LastTurnID:       lastTurnID,
-		LastTurnStatus:   lastTurnStatus,
-		AgentNickname:    optionalString(record.Thread.AgentNickname),
-		AgentRole:        optionalString(record.Thread.AgentRole),
-		Ended:            record.Runtime.Ended,
+		ID:                  record.Thread.ID,
+		AgentID:             inferAgentID(record.Thread),
+		Name:                optionalString(record.Thread.Name),
+		Preview:             record.Thread.Preview,
+		CWD:                 record.Thread.CWD,
+		Source:              codex.SourceLabel(record.Thread.Source),
+		Status:              effectiveStatus,
+		ActiveFlags:         cloneStrings(record.Thread.Status.ActiveFlags),
+		Loaded:              effectiveLoaded,
+		UpdatedAt:           record.Thread.UpdatedAt,
+		CreatedAt:           record.Thread.CreatedAt,
+		ModelProvider:       record.Thread.ModelProvider,
+		Branch:              codex.GitBranch(record.Thread.GitInfo),
+		PendingApprovals:    pendingApprovals,
+		LastTurnID:          lastTurnID,
+		LastTurnStatus:      lastTurnStatus,
+		AgentNickname:       optionalString(record.Thread.AgentNickname),
+		AgentRole:           optionalString(record.Thread.AgentRole),
+		LifecycleStage:      lifecycleStage,
+		HistoryAvailable:    historyAvailable,
+		RuntimeAvailable:    runtimeAvailable,
+		RuntimeAttachMode:   record.Runtime.RuntimeAttachMode,
+		ResumeAvailable:     resumeAvailable,
+		ResumeBlockedReason: resumeBlockedReason,
+		Ended:               record.Runtime.Ended,
+	}
+}
+
+func inferAgentID(thread codex.Thread) string {
+	if strings.HasPrefix(thread.ID, claudeThreadPrefix) {
+		return "claude"
+	}
+	return "codex"
+}
+
+func resumeAvailability(record store.SessionRecord) (bool, string) {
+	if strings.HasPrefix(record.Thread.ID, claudeThreadPrefix) {
+		return claudeResumeAvailability(record)
+	}
+	return true, ""
+}
+
+func sessionHistoryAvailable(record store.SessionRecord) bool {
+	if strings.HasPrefix(record.Thread.ID, claudeThreadPrefix) {
+		return record.Thread.Path != nil && strings.TrimSpace(*record.Thread.Path) != ""
+	}
+	return len(record.Thread.Turns) > 0
+}
+
+func sessionRuntimeAvailable(record store.SessionRecord) bool {
+	if record.Loaded && !record.Runtime.Ended {
+		return true
+	}
+	return slices.Contains(record.Thread.Status.ActiveFlags, "claudeRuntimeAvailable")
+}
+
+func deriveLifecycleStage(record store.SessionRecord, historyAvailable, runtimeAvailable bool) string {
+	switch {
+	case record.Runtime.Ended:
+		return "ended"
+	case record.Loaded:
+		return "managed"
+	case runtimeAvailable:
+		return "runtime_available"
+	case historyAvailable:
+		return "history_only"
+	default:
+		return "discovered"
 	}
 }
 
@@ -137,11 +196,34 @@ func normalizeItem(item map[string]any) TurnItem {
 		result.Body = fmt.Sprintf("%v/%v", item["server"], item["tool"])
 	case "dynamicToolCall":
 		result.Title = "Tool Call"
-		result.Body = fmt.Sprintf("%v:%v", item["namespace"], item["tool"])
+		if title, ok := item["title"].(string); ok && strings.TrimSpace(title) != "" {
+			result.Title = strings.TrimSpace(title)
+		}
+		if summary, ok := item["summary"].(string); ok && strings.TrimSpace(summary) != "" {
+			result.Body = strings.TrimSpace(summary)
+		} else {
+			result.Body = fmt.Sprintf("%v:%v", item["namespace"], item["tool"])
+		}
+		result.Status, _ = item["status"].(string)
+		if tool, ok := item["tool"].(string); ok && strings.TrimSpace(tool) != "" {
+			result.Metadata["tool"] = strings.TrimSpace(tool)
+		}
+		if progress, ok := item["progress"].(string); ok && strings.TrimSpace(progress) != "" {
+			result.Metadata["progress"] = strings.TrimSpace(progress)
+		}
+		if output, ok := item["result"].(string); ok && strings.TrimSpace(output) != "" {
+			result.Auxiliary = strings.TrimSpace(output)
+		}
 	case "collabAgentToolCall":
 		result.Title = "Delegation"
 		result.Body, _ = item["prompt"].(string)
 		result.Status, _ = item["status"].(string)
+		if title, ok := item["title"].(string); ok && strings.TrimSpace(title) != "" {
+			result.Metadata["title"] = strings.TrimSpace(title)
+		}
+		if output, ok := item["result"].(string); ok && strings.TrimSpace(output) != "" {
+			result.Auxiliary = strings.TrimSpace(output)
+		}
 	default:
 		result.Title = strings.Title(itemType)
 	}

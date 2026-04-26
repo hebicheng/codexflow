@@ -40,6 +40,9 @@ class _ApprovalScreenState extends State<ApprovalScreen> {
   @override
   Widget build(BuildContext context) {
     final model = context.watch<AppModel>();
+    final approvals = model.selectedAgentApprovals;
+    final supportsApprovals =
+        model.selectedAgentOption?.capabilities.supportsApprovals ?? true;
     return Scaffold(
       backgroundColor: Palette.canvas,
       appBar: AppBar(
@@ -54,11 +57,13 @@ class _ApprovalScreenState extends State<ApprovalScreen> {
           child: ListView(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
             children: <Widget>[
-              const PanelCard(
+              PanelCard(
                 compact: true,
                 child: Text(
-                  '这里处理 Codex 发来的命令审批、文件变更审批、权限审批，以及需要你回答的问题。',
-                  style: TextStyle(
+                  supportsApprovals
+                      ? '这里处理当前 Agent 发来的命令审批、文件变更审批、权限审批，以及需要你回答的问题。'
+                      : '当前 Agent 不提供审批事件流，这里暂时不会出现待审批项目。',
+                  style: const TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w500,
                     color: Palette.mutedInk,
@@ -67,12 +72,12 @@ class _ApprovalScreenState extends State<ApprovalScreen> {
                 ),
               ),
               const SizedBox(height: 12),
-              if (model.dashboard.approvals.isEmpty)
-                const PanelCard(
+              if (approvals.isEmpty)
+                PanelCard(
                   compact: true,
                   child: Text(
-                    '当前没有待处理审批。',
-                    style: TextStyle(
+                    supportsApprovals ? '当前没有待处理审批。' : '当前 Agent 不支持审批能力。',
+                    style: const TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w500,
                       color: Palette.mutedInk,
@@ -81,7 +86,7 @@ class _ApprovalScreenState extends State<ApprovalScreen> {
                 )
               else
                 ApprovalList(
-                  approvals: model.dashboard.approvals,
+                  approvals: approvals,
                   showSessionLabel: true,
                 ),
             ],

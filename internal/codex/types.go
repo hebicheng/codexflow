@@ -29,6 +29,34 @@ type ThreadResumeResponse struct {
 	Thread Thread `json:"thread"`
 }
 
+type AppsListResponse struct {
+	Data       []AppInfo `json:"data"`
+	NextCursor *string   `json:"nextCursor"`
+}
+
+type AppInfo struct {
+	ID                  string            `json:"id"`
+	Name                string            `json:"name"`
+	IsAccessible        bool              `json:"isAccessible"`
+	IsEnabled           bool              `json:"isEnabled"`
+	DistributionChannel *string           `json:"distributionChannel"`
+	PluginDisplayNames  []string          `json:"pluginDisplayNames"`
+	Labels              map[string]string `json:"labels"`
+}
+
+type ExternalAgentConfigDetectResponse struct {
+	Items []ExternalAgentConfigMigrationItem `json:"items"`
+}
+
+type ExternalAgentConfigMigrationItem struct {
+	ItemType    string         `json:"itemType"`
+	Description string         `json:"description"`
+	CWD         *string        `json:"cwd"`
+	Details     map[string]any `json:"details"`
+}
+
+type ExternalAgentConfigImportResponse struct{}
+
 type ThreadUnsubscribeResponse struct {
 	Status string `json:"status"`
 }
@@ -42,23 +70,24 @@ type TurnSteerResponse struct{}
 type TurnInterruptResponse struct{}
 
 type Thread struct {
-	ID            string          `json:"id"`
-	ForkedFromID  *string         `json:"forkedFromId"`
-	Preview       string          `json:"preview"`
-	Ephemeral     bool            `json:"ephemeral"`
-	ModelProvider string          `json:"modelProvider"`
-	CreatedAt     int64           `json:"createdAt"`
-	UpdatedAt     int64           `json:"updatedAt"`
-	Status        ThreadStatus    `json:"status"`
-	Path          *string         `json:"path"`
-	CWD           string          `json:"cwd"`
-	CLIVersion    string          `json:"cliVersion"`
-	Source        json.RawMessage `json:"source"`
-	AgentNickname *string         `json:"agentNickname"`
-	AgentRole     *string         `json:"agentRole"`
-	GitInfo       map[string]any  `json:"gitInfo"`
-	Name          *string         `json:"name"`
-	Turns         []Turn          `json:"turns"`
+	ID               string          `json:"id"`
+	ForkedFromID     *string         `json:"forkedFromId"`
+	Preview          string          `json:"preview"`
+	Ephemeral        bool            `json:"ephemeral"`
+	ModelProvider    string          `json:"modelProvider"`
+	CreatedAt        int64           `json:"createdAt"`
+	UpdatedAt        int64           `json:"updatedAt"`
+	Status           ThreadStatus    `json:"status"`
+	Path             *string         `json:"path"`
+	RuntimeSessionID *string         `json:"runtimeSessionId,omitempty"`
+	CWD              string          `json:"cwd"`
+	CLIVersion       string          `json:"cliVersion"`
+	Source           json.RawMessage `json:"source"`
+	AgentNickname    *string         `json:"agentNickname"`
+	AgentRole        *string         `json:"agentRole"`
+	GitInfo          map[string]any  `json:"gitInfo"`
+	Name             *string         `json:"name"`
+	Turns            []Turn          `json:"turns"`
 }
 
 type ThreadStatus struct {

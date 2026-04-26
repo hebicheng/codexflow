@@ -56,7 +56,8 @@ struct SessionDetailView: View {
   }
 
   private var sessionApprovals: [PendingRequestView] {
-    model.approvals(for: sessionID)
+    guard supportsApprovals else { return [] }
+    return model.approvals(for: sessionID)
   }
 
   private var activeTurnApprovals: [PendingRequestView] {
@@ -69,15 +70,47 @@ struct SessionDetailView: View {
     return sessionApprovals.filter { $0.turnId != activeTurn.id }
   }
 
+  private var capabilities: AgentCapabilities {
+    guard let summary else {
+      return AgentCapabilities(
+        supportsInterruptTurn: true,
+        supportsApprovals: true,
+        supportsArchive: true,
+        supportsResume: true,
+        supportsHistoryImport: false
+      )
+    }
+    return model.capabilities(for: summary)
+  }
+
+  private var supportsApprovals: Bool { capabilities.supportsApprovals }
+  private var supportsInterruptTurn: Bool { capabilities.supportsInterruptTurn }
+  private var supportsResume: Bool {
+    guard let summary else { return capabilities.supportsResume }
+    return model.canResume(summary)
+  }
+  private var supportsArchive: Bool { capabilities.supportsArchive }
+
   var body: some View {
     ZStack {
       AtmosphereBackground()
 
       ScrollView {
         VStack(spacing: 12) {
+          if !model.operationNotice.isEmpty {
+            Text(model.operationNotice)
+              .font(.system(.caption, design: .rounded))
+              .foregroundStyle(model.operationNoticeIsError ? Palette.danger : Palette.success)
+              .padding(.horizontal, 12)
+              .padding(.vertical, 10)
+              .frame(maxWidth: .infinity, alignment: .leading)
+              .background((model.operationNoticeIsError ? Palette.danger : Palette.success).opacity(0.08))
+              .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+          }
+
           if let summary {
             summaryCard(summary)
-            if !remainingSessionApprovals.isEmpty {
+            if supportsApprovals && !remainingSessionApprovals.isEmpty {
               sessionApprovalsSection(
                 title: "当前会话待审批",
                 approvals: remainingSessionApprovals
@@ -142,7 +175,7 @@ struct SessionDetailView: View {
         await refreshSessionPage()
       }
     }
-    .onChange(of: selectedPhotoItem) { item in
+    .onChange(of: selectedPhotoItem) { _, item in
       guard let item else { return }
       Task {
         await loadAndUploadPhoto(item)
@@ -206,6 +239,13 @@ struct SessionDetailView: View {
 
         ScrollView(.horizontal, showsIndicators: false) {
           HStack(spacing: 8) {
+            CapsuleTag(title: "托管", value: summary.loaded ? "已接管" : "未接管")
+            if summary.isClaudeSession {
+              CapsuleTag(title: "链路", value: summary.runtimeAvailable ? "Runtime" : "History")
+              if summary.loaded && !summary.runtimeAttachMode.isEmpty {
+                CapsuleTag(title: "接管", value: summary.runtimeAttachMode == "resumed_existing" ? "现有 Runtime" : (summary.runtimeAttachMode == "opened_from_history" ? "历史新开" : "新建 Runtime"))
+              }
+            }
             CapsuleTag(title: "来源", value: summary.source)
             CapsuleTag(title: "分支", value: summary.branch.isEmpty ? "未识别" : summary.branch)
             CapsuleTag(title: "模型", value: summary.modelProvider)
@@ -228,7 +268,7 @@ struct SessionDetailView: View {
           }
         }
 
-        if summary.pendingApprovals > 0 {
+        if supportsApprovals && summary.pendingApprovals > 0 {
           Text("这个会话当前有 \(summary.pendingApprovals) 个审批等待处理，你可以直接在下面处理，也可以去“审批”页集中处理。")
             .font(.system(.footnote, design: .rounded, weight: .medium))
             .foregroundStyle(Palette.warning)
@@ -280,14 +320,17 @@ struct SessionDetailView: View {
             await refreshSessionPage()
           }
         } label: {
-          Text(summary.isEnded ? "重新接管会话" : "Resume 并接管会话")
+          Text((!summary.isEnded && summary.isClaudeSession && !summary.runtimeAvailable)
+            ? "当前无 Runtime"
+            : (summary.isEnded ? "重新接管会话" : "Resume 并接管会话"))
             .font(.system(.subheadline, design: .rounded, weight: .semibold))
             .frame(maxWidth: .infinity)
             .padding(.vertical, 13)
-            .background(Palette.softBlue)
+            .background(supportsResume ? Palette.softBlue : Palette.mutedInk.opacity(0.35))
             .foregroundStyle(.white)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
+        .disabled(!supportsResume)
       }
     }
   }
@@ -458,6 +501,8 @@ struct SessionDetailView: View {
                   .stroke(Palette.warning.opacity(0.18), lineWidth: 1)
               }
             }
+            .disabled(!supportsInterruptTurn)
+            .opacity(supportsInterruptTurn ? 1 : 0.45)
 
             Button {
               isPromptFocused = false
@@ -512,6 +557,12 @@ struct SessionDetailView: View {
             }
           }
         }
+
+        if !supportsApprovals || !supportsInterruptTurn || !supportsResume || !supportsArchive {
+          Text("当前 Agent 部分能力已降级：\(supportsApprovals ? "" : "审批 ")\(supportsInterruptTurn ? "" : "中断 ")\(supportsResume ? "" : "接管 ")\(supportsArchive ? "" : "归档 ")")
+            .font(.system(.caption, design: .rounded, weight: .medium))
+            .foregroundStyle(Palette.mutedInk)
+        }
       }
     }
   }
@@ -519,6 +570,21 @@ struct SessionDetailView: View {
   private func actionSummary(for summary: SessionSummary) -> String {
     if summary.isEnded {
       return "这个会话已经在 CodexFlow 中结束。历史和 turn 会保留，但不再由 CodexFlow 托管；如需继续，请重新接管。"
+    }
+    if summary.isClaudeSession && summary.loaded && summary.runtimeAttachMode == "resumed_existing" {
+      return "当前这条 Claude 会话已经重新接入现有 runtime。你现在看到的是原 runtime 的继续态，可以直接开始下一轮或继续处理中断。"
+    }
+    if summary.isClaudeSession && summary.loaded && summary.runtimeAttachMode == "opened_from_history" {
+      return "当前这条 Claude 会话由 CodexFlow 新开 runtime 托管。历史 transcript 会继续保留显示，但后续运行状态来自这条新 runtime。"
+    }
+    if summary.isClaudeSession && summary.loaded && summary.runtimeAttachMode == "new_session" {
+      return "这是由 CodexFlow 新建的 Claude 会话。当前 runtime 和历史从一开始就是同一条链路。"
+    }
+    if summary.isClaudeSession && summary.runtimeAvailable && !summary.loaded {
+      return "已经检测到 Claude live runtime。接入后，这个页面才会开始跟踪运行状态、处理中断，并允许继续下一轮。"
+    }
+    if summary.isClaudeSession && summary.historyAvailable && !summary.runtimeAvailable {
+      return "这是 Claude 历史导入记录。当前可以查看历史，但本机没有发现对应 live runtime。"
     }
     if !summary.loaded && summary.lastTurnStatus == "inProgress" {
       return "这个会话当前还没被 CodexFlow 接管。现在只能查看历史；点下面“Resume 并接管会话”后，才可以继续 steer、处理中断和刷新运行状态。"
@@ -534,7 +600,7 @@ struct SessionDetailView: View {
 
   @ViewBuilder
   private func stateBanner(for summary: SessionSummary) -> some View {
-    let tone: Color = summary.isEnded ? Palette.mutedInk : (summary.pendingApprovals > 0 ? Palette.warning : (summary.loaded ? Palette.success : Palette.softBlue))
+    let tone: Color = summary.isEnded ? Palette.mutedInk : ((supportsApprovals && summary.pendingApprovals > 0) ? Palette.warning : (summary.loaded ? Palette.success : Palette.softBlue))
 
     HStack(alignment: .top, spacing: 8) {
       RoundedRectangle(cornerRadius: 4, style: .continuous)
@@ -553,6 +619,15 @@ struct SessionDetailView: View {
   private func takeoverSummary(for summary: SessionSummary) -> String {
     if summary.isEnded {
       return "这个会话已经在 CodexFlow 中结束了。历史记录仍然可看；如果你想继续发 prompt 或重新托管审批/状态刷新，先重新接管。"
+    }
+    if summary.isClaudeSession && summary.runtimeAvailable && !summary.loaded {
+      return "已经检测到 Claude live runtime。接入后，这个页面才会开始跟踪运行状态、处理中断，并允许继续下一轮。"
+    }
+    if summary.isClaudeSession && summary.historyAvailable && !summary.runtimeAvailable {
+      return "这是 Claude 历史导入记录。当前可以查看历史，但本机没有发现对应 live runtime。"
+    }
+    if !summary.canResume && !summary.resumeBlockedReason.isEmpty {
+      return summary.resumeBlockedReason
     }
     if summary.lastTurnStatus == "inProgress" {
       return "这个会话可能仍在别处运行，但当前不在 CodexFlow 里托管。先接管后，CodexFlow 才能继续刷新状态、处理审批，并允许你继续 steer 或中断。"
@@ -1094,6 +1169,10 @@ private struct TimelineTypeTag: View {
       return "Agent"
     case "fileChange":
       return "文件变更"
+    case "dynamicToolCall":
+      return "工具调用"
+    case "collabAgentToolCall":
+      return "委托"
     default:
       return item.title
     }
@@ -1108,6 +1187,10 @@ private struct TimelineTypeTag: View {
     case "fileChange":
       return Palette.accent2
     case "commandExecution":
+      return Palette.warning
+    case "dynamicToolCall":
+      return Palette.softBlue
+    case "collabAgentToolCall":
       return Palette.warning
     default:
       return Palette.mutedInk
@@ -1150,6 +1233,10 @@ private struct TimelineEntryView: View {
         FileChangeBlock(item: item)
       case "commandExecution":
         CommandExecutionBlock(item: item)
+      case "dynamicToolCall":
+        ToolCallBlock(item: item)
+      case "collabAgentToolCall":
+        DelegationBlock(item: item)
       default:
         if !bodyPreview.isEmpty {
           Text(bodyPreview)
@@ -1169,6 +1256,65 @@ private struct TimelineEntryView: View {
         .stroke(Palette.line, lineWidth: 1)
     }
     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+  }
+}
+
+private struct ToolCallBlock: View {
+  let item: TurnItem
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      if let tool = item.metadata["tool"], !tool.isEmpty {
+        Text(tool)
+          .font(.system(.caption, design: .monospaced))
+          .foregroundStyle(Palette.ink)
+      }
+
+      if !item.body.isEmpty {
+        Text(item.body)
+          .font(.system(.caption, design: .rounded))
+          .foregroundStyle(Palette.mutedInk)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+
+      if let progress = item.metadata["progress"], !progress.isEmpty {
+        Text("进行中：\(progress)")
+          .font(.system(.caption2, design: .rounded, weight: .semibold))
+          .foregroundStyle(Palette.softBlue)
+      }
+
+      if !item.auxiliary.isEmpty {
+        TerminalOutputBlock(text: item.auxiliary, maxVisibleLines: 10)
+      }
+    }
+  }
+}
+
+private struct DelegationBlock: View {
+  let item: TurnItem
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      if let title = item.metadata["title"], !title.isEmpty {
+        Text(title)
+          .font(.system(.caption, design: .rounded, weight: .semibold))
+          .foregroundStyle(Palette.ink)
+      }
+
+      if !item.body.isEmpty {
+        HeadTailExcerptBlock(
+          raw: item.body,
+          head: 170,
+          tail: 110,
+          font: .system(.caption, design: .rounded),
+          color: Palette.mutedInk
+        )
+      }
+
+      if !item.auxiliary.isEmpty {
+        TerminalOutputBlock(text: item.auxiliary, maxVisibleLines: 10)
+      }
+    }
   }
 }
 

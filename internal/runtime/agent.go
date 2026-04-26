@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"codexflow/internal/codex"
@@ -15,12 +17,24 @@ import (
 )
 
 type Agent struct {
-	cfg     config.Config
-	logger  *slog.Logger
-	client  *codex.Client
-	store   *store.Store
-	broker  *Broker
-	started time.Time
+	cfg       config.Config
+	logger    *slog.Logger
+	client    *codex.Client
+	store     *store.Store
+	broker    *Broker
+	started   time.Time
+	runCtx    context.Context
+	runCancel context.CancelFunc
+
+	agentsMu        sync.RWMutex
+	availableAgents []AgentOption
+	defaultAgentID  string
+	serviceByAgent  map[string]string
+
+	claudeSessionsMu sync.Mutex
+	claudeSessions   map[string]*claudeSDKSession
+	claudeTurnsMu    sync.Mutex
+	claudeRunning    map[string]runningClaudeTurn
 }
 
 func NewAgent(cfg config.Config, logger *slog.Logger) *Agent {
@@ -35,13 +49,21 @@ func NewAgent(cfg config.Config, logger *slog.Logger) *Agent {
 		sessionStore, _ = store.New(nil)
 	}
 
+	defaultAgents, defaultServiceMap, defaultAgentID := defaultAgentCatalog()
+
 	return &Agent{
-		cfg:     cfg,
-		logger:  logger,
-		client:  codex.NewClient(cfg.CodexPath, logger),
-		store:   sessionStore,
-		broker:  NewBroker(),
-		started: time.Now(),
+		cfg:             cfg,
+		logger:          logger,
+		client:          codex.NewClient(cfg.CodexPath, logger),
+		store:           sessionStore,
+		broker:          NewBroker(),
+		started:         time.Now(),
+		runCtx:          context.Background(),
+		availableAgents: defaultAgents,
+		defaultAgentID:  defaultAgentID,
+		serviceByAgent:  defaultServiceMap,
+		claudeSessions:  make(map[string]*claudeSDKSession),
+		claudeRunning:   make(map[string]runningClaudeTurn),
 	}
 }
 
@@ -50,6 +72,15 @@ func (a *Agent) Start(ctx context.Context) error {
 		return err
 	}
 
+	a.runCtx, a.runCancel = context.WithCancel(context.Background())
+	go func() {
+		<-ctx.Done()
+		if a.runCancel != nil {
+			a.runCancel()
+		}
+	}()
+
+	a.refreshAgentCatalog(ctx, true)
 	a.restoreManagedSessions(ctx)
 
 	if err := a.Refresh(ctx); err != nil {
@@ -107,9 +138,11 @@ func (a *Agent) Dashboard() Dashboard {
 			ListenAddr:      a.cfg.ListenAddr,
 			CodexBinaryPath: a.cfg.CodexPath,
 		},
-		Stats:     stats,
-		Sessions:  summaries,
-		Approvals: approvals,
+		Agents:       a.agentOptions(),
+		DefaultAgent: a.defaultAgent(),
+		Stats:        stats,
+		Sessions:     summaries,
+		Approvals:    approvals,
 	}
 }
 
@@ -129,6 +162,10 @@ func (a *Agent) ListSessions() []SessionSummary {
 }
 
 func (a *Agent) SessionDetail(ctx context.Context, threadID string) (SessionDetail, error) {
+	if isClaudeThreadID(threadID) {
+		return a.claudeSessionDetail(threadID)
+	}
+
 	var response codex.ThreadReadResponse
 	if err := a.client.Call(ctx, "thread/read", map[string]any{
 		"threadId":     threadID,
@@ -182,6 +219,81 @@ func (a *Agent) ResolveRequest(ctx context.Context, requestID string, result jso
 		return fmt.Errorf("pending request %s not found", requestID)
 	}
 
+	if request.Method == "item/tool/requestUserInput" && len(request.RawRPCRequestID) == 0 {
+		threadID := strings.TrimSpace(request.ThreadID)
+		if isClaudeThreadID(threadID) {
+			answers, err := decodeClaudeAnswers(result)
+			if err != nil {
+				return err
+			}
+			session, ok := a.getClaudeSession(threadID)
+			if !ok {
+				record, recordOK := a.store.SnapshotSession(threadID)
+				if !recordOK {
+					return errors.New("claude session not found")
+				}
+				session, err = a.getOrCreateClaudeManagedSession(ctx, threadID, strings.TrimSpace(record.Thread.CWD))
+				if err != nil {
+					return err
+				}
+			}
+			if err := session.submitQuestionAnswer(requestID, answers); err != nil {
+				return err
+			}
+			a.broker.Publish("approval.resolved", PendingRequestView{
+				ID:        request.ID,
+				Method:    request.Method,
+				Kind:      requestKind(request.Method),
+				ThreadID:  request.ThreadID,
+				TurnID:    request.TurnID,
+				ItemID:    request.ItemID,
+				Reason:    request.Reason,
+				Summary:   request.Summary,
+				Choices:   cloneStrings(request.Choices),
+				CreatedAt: request.CreatedAt,
+				Params:    request.Params,
+			})
+			return nil
+		}
+	}
+	if (request.Method == "item/commandExecution/requestApproval" || request.Method == "item/fileChange/requestApproval") && len(request.RawRPCRequestID) == 0 {
+		threadID := strings.TrimSpace(request.ThreadID)
+		if isClaudeThreadID(threadID) {
+			decision, err := decodeClaudePermissionDecision(result)
+			if err != nil {
+				return err
+			}
+			session, ok := a.getClaudeSession(threadID)
+			if !ok {
+				record, recordOK := a.store.SnapshotSession(threadID)
+				if !recordOK {
+					return errors.New("claude session not found")
+				}
+				session, err = a.getOrCreateClaudeManagedSession(ctx, threadID, strings.TrimSpace(record.Thread.CWD))
+				if err != nil {
+					return err
+				}
+			}
+			if err := session.submitApprovalDecision(requestID, decision); err != nil {
+				return err
+			}
+			a.broker.Publish("approval.resolved", PendingRequestView{
+				ID:        request.ID,
+				Method:    request.Method,
+				Kind:      requestKind(request.Method),
+				ThreadID:  request.ThreadID,
+				TurnID:    request.TurnID,
+				ItemID:    request.ItemID,
+				Reason:    request.Reason,
+				Summary:   request.Summary,
+				Choices:   cloneStrings(request.Choices),
+				CreatedAt: request.CreatedAt,
+				Params:    request.Params,
+			})
+			return nil
+		}
+	}
+
 	var payload any
 	if len(result) > 0 {
 		if err := json.Unmarshal(result, &payload); err != nil {
@@ -210,6 +322,8 @@ func (a *Agent) ResolveRequest(ctx context.Context, requestID string, result jso
 }
 
 func (a *Agent) Refresh(ctx context.Context) error {
+	a.refreshAgentCatalog(ctx, false)
+
 	threads, err := a.fetchThreads(ctx)
 	if err != nil {
 		return err
@@ -220,9 +334,99 @@ func (a *Agent) Refresh(ctx context.Context) error {
 		return err
 	}
 
+	claudeThreads, err := a.fetchClaudeThreads()
+	if err != nil {
+		a.logger.Debug("failed to discover claude sessions", "error", err)
+	} else if len(claudeThreads) > 0 {
+		managedClaudeIDs := make(map[string]struct{})
+		for _, threadID := range a.store.ManagedSessionIDs() {
+			if isClaudeThreadID(threadID) {
+				managedClaudeIDs[threadID] = struct{}{}
+			}
+		}
+		filteredClaudeThreads := make([]codex.Thread, 0, len(claudeThreads))
+		for idx := range claudeThreads {
+			if _, managed := managedClaudeIDs[claudeThreads[idx].ID]; managed {
+				continue
+			}
+			existing, ok := a.store.SnapshotSession(claudeThreads[idx].ID)
+			if !ok {
+				filteredClaudeThreads = append(filteredClaudeThreads, claudeThreads[idx])
+				continue
+			}
+			if len(existing.Thread.Turns) > 0 {
+				claudeThreads[idx].Turns = existing.Thread.Turns
+			}
+			if existing.Thread.UpdatedAt > claudeThreads[idx].UpdatedAt {
+				claudeThreads[idx].UpdatedAt = existing.Thread.UpdatedAt
+			}
+			if strings.TrimSpace(existing.Thread.Preview) != "" {
+				claudeThreads[idx].Preview = existing.Thread.Preview
+			}
+			filteredClaudeThreads = append(filteredClaudeThreads, claudeThreads[idx])
+		}
+		threads = append(threads, filteredClaudeThreads...)
+	}
+
+	// Keep locally managed Claude sessions even when history.jsonl/transcript
+	// is temporarily missing or delayed, otherwise a just-created/taken-over
+	// session can disappear after dashboard refresh.
+	existingByID := make(map[string]store.SessionRecord)
+	for _, record := range a.store.SnapshotSessions() {
+		existingByID[record.Thread.ID] = record
+	}
+	present := make(map[string]struct{}, len(threads))
+	for _, thread := range threads {
+		present[thread.ID] = struct{}{}
+	}
+	for _, threadID := range a.store.ManagedSessionIDs() {
+		if !isClaudeThreadID(threadID) {
+			continue
+		}
+		if _, ok := present[threadID]; ok {
+			continue
+		}
+		record, ok := existingByID[threadID]
+		if !ok {
+			continue
+		}
+		threads = append(threads, record.Thread)
+		present[threadID] = struct{}{}
+	}
+
 	loaded := make(map[string]bool, len(loadedIDs))
 	for _, id := range loadedIDs {
 		loaded[id] = true
+	}
+	for _, threadID := range a.store.ManagedSessionIDs() {
+		if isClaudeThreadID(threadID) {
+			loaded[threadID] = true
+		}
+	}
+
+	for idx := range threads {
+		threadID := strings.TrimSpace(threads[idx].ID)
+		if threadID == "" || isClaudeThreadID(threadID) {
+			continue
+		}
+		if !(loaded[threadID] || a.store.HasLocalSessionState(threadID)) {
+			continue
+		}
+		readCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
+		var detail codex.ThreadReadResponse
+		err := a.client.Call(readCtx, "thread/read", map[string]any{
+			"threadId":     threadID,
+			"includeTurns": true,
+		}, &detail)
+		cancel()
+		if err != nil {
+			if strings.Contains(err.Error(), "includeTurns is unavailable before first user message") {
+				continue
+			}
+			a.logger.Debug("failed to hydrate thread turns during refresh", "threadId", threadID, "error", err)
+			continue
+		}
+		threads[idx] = detail.Thread
 	}
 
 	a.store.ReplaceSessions(threads, loaded)
@@ -230,13 +434,26 @@ func (a *Agent) Refresh(ctx context.Context) error {
 	return nil
 }
 
-func (a *Agent) StartSession(ctx context.Context, cwd, prompt string) (SessionSummary, error) {
-	var threadResp codex.ThreadStartResponse
-	if err := a.client.Call(ctx, "thread/start", map[string]any{
+func (a *Agent) StartSession(ctx context.Context, cwd, prompt, requestedAgentID string) (SessionSummary, error) {
+	agentID, serviceName, err := a.resolveAgentForStart(requestedAgentID)
+	if err != nil {
+		return SessionSummary{}, err
+	}
+	if agentID == "claude" {
+		return a.startClaudeSession(ctx, cwd, prompt)
+	}
+
+	params := map[string]any{
 		"cwd":                    emptyToNil(cwd),
 		"experimentalRawEvents":  true,
 		"persistExtendedHistory": true,
-	}, &threadResp); err != nil {
+	}
+	if serviceName != "" {
+		params["serviceName"] = serviceName
+	}
+
+	var threadResp codex.ThreadStartResponse
+	if err := a.client.Call(ctx, "thread/start", params, &threadResp); err != nil {
 		return SessionSummary{}, err
 	}
 
@@ -258,6 +475,10 @@ func (a *Agent) StartSession(ctx context.Context, cwd, prompt string) (SessionSu
 }
 
 func (a *Agent) ResumeSession(ctx context.Context, threadID string) (SessionSummary, error) {
+	if isClaudeThreadID(threadID) {
+		return a.resumeClaudeSession(ctx, threadID)
+	}
+
 	var response codex.ThreadResumeResponse
 	if err := a.client.Call(ctx, "thread/resume", map[string]any{
 		"threadId":               threadID,
@@ -277,6 +498,10 @@ func (a *Agent) ResumeSession(ctx context.Context, threadID string) (SessionSumm
 }
 
 func (a *Agent) EndSession(ctx context.Context, threadID string) error {
+	if isClaudeThreadID(threadID) {
+		return a.endClaudeSession(ctx, threadID)
+	}
+
 	record, ok := a.store.SnapshotSession(threadID)
 	if ok && record.Loaded && len(record.Thread.Turns) > 0 {
 		lastTurn := record.Thread.Turns[len(record.Thread.Turns)-1]
@@ -311,6 +536,10 @@ func (a *Agent) EndSession(ctx context.Context, threadID string) error {
 }
 
 func (a *Agent) ArchiveSession(ctx context.Context, threadID string) error {
+	if isClaudeThreadID(threadID) {
+		return a.archiveClaudeSession(threadID)
+	}
+
 	if err := a.client.Call(ctx, "thread/archive", map[string]any{
 		"threadId": threadID,
 	}, nil); err != nil {
@@ -332,6 +561,9 @@ func (a *Agent) StartTurnWithPrompt(ctx context.Context, threadID, prompt string
 func (a *Agent) StartTurn(ctx context.Context, threadID string, input []map[string]any) (TurnDetail, error) {
 	if len(input) == 0 {
 		return TurnDetail{}, errors.New("turn input is required")
+	}
+	if isClaudeThreadID(threadID) {
+		return a.startClaudeTurn(ctx, threadID, input)
 	}
 
 	var response codex.TurnStartResponse
@@ -366,6 +598,17 @@ func (a *Agent) SteerTurn(ctx context.Context, threadID, turnID string, input []
 	if len(input) == 0 {
 		return errors.New("turn input is required")
 	}
+	if isClaudeThreadID(threadID) {
+		if running, ok := a.getRunningClaudeTurn(threadID); ok {
+			previousTurnID := running.TurnID
+			running.Cancel()
+			if err := a.waitForClaudeTurnClear(ctx, threadID, previousTurnID); err != nil {
+				return err
+			}
+		}
+		_, err := a.startClaudeTurn(ctx, threadID, input)
+		return err
+	}
 
 	var response codex.TurnSteerResponse
 	if err := a.client.Call(ctx, "turn/steer", map[string]any{
@@ -384,6 +627,26 @@ func (a *Agent) SteerTurn(ctx context.Context, threadID, turnID string, input []
 }
 
 func (a *Agent) InterruptTurn(ctx context.Context, threadID, turnID string) error {
+	if isClaudeThreadID(threadID) {
+		running, ok := a.getRunningClaudeTurn(threadID)
+		if !ok {
+			return errors.New("no running claude turn")
+		}
+		if strings.TrimSpace(turnID) != "" && running.TurnID != strings.TrimSpace(turnID) {
+			return errors.New("turn is not running")
+		}
+		running.Cancel()
+		if err := a.waitForClaudeTurnClear(ctx, threadID, running.TurnID); err != nil {
+			a.logger.Warn("claude turn did not clear after interrupt; forcing local stop", "threadId", threadID, "turnId", running.TurnID, "error", err)
+			a.forceStopClaudeTurn(threadID, running.TurnID, "interrupted by user")
+		}
+		a.broker.Publish("turn.interrupted", map[string]string{
+			"threadId": threadID,
+			"turnId":   running.TurnID,
+		})
+		return nil
+	}
+
 	var response codex.TurnInterruptResponse
 	if err := a.client.Call(ctx, "turn/interrupt", map[string]any{
 		"threadId": threadID,
@@ -598,6 +861,70 @@ func emptyToNil(value string) any {
 	return value
 }
 
+func decodeClaudeAnswers(result json.RawMessage) (map[string]string, error) {
+	if len(result) == 0 {
+		return nil, errors.New("answers required")
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(result, &payload); err != nil {
+		return nil, fmt.Errorf("decode claude answers: %w", err)
+	}
+
+	rawAnswers, ok := payload["answers"].(map[string]any)
+	if !ok || len(rawAnswers) == 0 {
+		return nil, errors.New("answers required")
+	}
+
+	answers := make(map[string]string)
+	for key, value := range rawAnswers {
+		answerObject, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		rawList, ok := answerObject["answers"].([]any)
+		if !ok || len(rawList) == 0 {
+			continue
+		}
+		first, _ := rawList[0].(string)
+		first = strings.TrimSpace(first)
+		if first == "" {
+			continue
+		}
+		answers[strings.TrimSpace(key)] = first
+	}
+
+	if len(answers) == 0 {
+		return nil, errors.New("answers required")
+	}
+	return answers, nil
+}
+
+func decodeClaudePermissionDecision(result json.RawMessage) (claudePermissionDecision, error) {
+	if len(result) == 0 {
+		return claudePermissionDecision{}, errors.New("decision required")
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(result, &payload); err != nil {
+		return claudePermissionDecision{}, fmt.Errorf("decode claude permission decision: %w", err)
+	}
+
+	rawDecision, ok := payload["decision"].(string)
+	if !ok {
+		return claudePermissionDecision{}, errors.New("decision required")
+	}
+
+	switch strings.TrimSpace(rawDecision) {
+	case "accept", "acceptForSession":
+		return claudePermissionDecision{Allow: true}, nil
+	case "decline", "cancel":
+		return claudePermissionDecision{Allow: false, Reason: rawDecision}, nil
+	default:
+		return claudePermissionDecision{}, fmt.Errorf("unsupported decision %q", rawDecision)
+	}
+}
+
 func textInput(prompt string) map[string]any {
 	return map[string]any{
 		"type":          "text",
@@ -614,4 +941,189 @@ func pendingCountForThread(pending []store.PendingRequest, threadID string) int 
 		}
 	}
 	return count
+}
+
+func defaultAgentCatalog() ([]AgentOption, map[string]string, string) {
+	return []AgentOption{
+			{
+				ID:        "codex",
+				Name:      "Codex",
+				Available: true,
+				Default:   true,
+				Capabilities: AgentCapabilities{
+					SupportsInterruptTurn: true,
+					SupportsApprovals:     true,
+					SupportsArchive:       true,
+					SupportsResume:        true,
+					SupportsHistoryImport: false,
+				},
+			},
+			{
+				ID:        "claude",
+				Name:      "Claude Code",
+				Available: false,
+				Default:   false,
+				Capabilities: AgentCapabilities{
+					SupportsInterruptTurn: true,
+					SupportsApprovals:     true,
+					SupportsArchive:       true,
+					SupportsResume:        true,
+					SupportsHistoryImport: true,
+				},
+			},
+		}, map[string]string{
+			"codex": "",
+		}, "codex"
+}
+
+func (a *Agent) refreshAgentCatalog(ctx context.Context, withImport bool) {
+	agents, serviceMap, defaultAgentID := defaultAgentCatalog()
+	claudeAvailable := a.detectClaudeCLI(ctx)
+
+	if withImport {
+		a.importExternalAgentConfig(ctx)
+	}
+
+	for idx := range agents {
+		if agents[idx].ID == "claude" {
+			agents[idx].Available = claudeAvailable
+			break
+		}
+	}
+
+	a.setAgentCatalog(agents, serviceMap, defaultAgentID)
+}
+
+func (a *Agent) importExternalAgentConfig(ctx context.Context) {
+	params := map[string]any{
+		"includeHome": true,
+	}
+
+	var detectResp codex.ExternalAgentConfigDetectResponse
+	if err := a.client.Call(ctx, "externalAgentConfig/detect", params, &detectResp); err != nil {
+		a.logger.Debug("external agent config detect failed", "error", err)
+		return
+	}
+
+	if len(detectResp.Items) == 0 {
+		return
+	}
+
+	var importResp codex.ExternalAgentConfigImportResponse
+	if err := a.client.Call(ctx, "externalAgentConfig/import", map[string]any{
+		"migrationItems": detectResp.Items,
+	}, &importResp); err != nil {
+		a.logger.Debug("external agent config import failed", "error", err)
+	}
+}
+
+func (a *Agent) fetchApps(ctx context.Context) ([]codex.AppInfo, error) {
+	var apps []codex.AppInfo
+	var cursor *string
+
+	for {
+		params := map[string]any{
+			"limit": 100,
+		}
+		if cursor != nil && *cursor != "" {
+			params["cursor"] = *cursor
+		}
+
+		var response codex.AppsListResponse
+		if err := a.client.Call(ctx, "app/list", params, &response); err != nil {
+			return nil, err
+		}
+		apps = append(apps, response.Data...)
+
+		if response.NextCursor == nil || *response.NextCursor == "" {
+			return apps, nil
+		}
+		cursor = response.NextCursor
+	}
+}
+
+func detectClaudeServiceName(apps []codex.AppInfo) string {
+	keywords := []string{"claude", "anthropic"}
+
+	for _, app := range apps {
+		if !app.IsAccessible {
+			continue
+		}
+
+		candidates := []string{
+			strings.ToLower(strings.TrimSpace(app.ID)),
+			strings.ToLower(strings.TrimSpace(app.Name)),
+		}
+		if app.DistributionChannel != nil {
+			candidates = append(candidates, strings.ToLower(strings.TrimSpace(*app.DistributionChannel)))
+		}
+		for _, name := range app.PluginDisplayNames {
+			candidates = append(candidates, strings.ToLower(strings.TrimSpace(name)))
+		}
+		for _, value := range app.Labels {
+			candidates = append(candidates, strings.ToLower(strings.TrimSpace(value)))
+		}
+
+		if containsAnyKeyword(candidates, keywords) {
+			return app.ID
+		}
+	}
+	return ""
+}
+
+func containsAnyKeyword(candidates []string, keywords []string) bool {
+	for _, candidate := range candidates {
+		if candidate == "" {
+			continue
+		}
+		for _, keyword := range keywords {
+			if strings.Contains(candidate, keyword) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (a *Agent) setAgentCatalog(options []AgentOption, serviceByAgent map[string]string, defaultAgentID string) {
+	a.agentsMu.Lock()
+	defer a.agentsMu.Unlock()
+
+	a.availableAgents = options
+	a.serviceByAgent = serviceByAgent
+	a.defaultAgentID = defaultAgentID
+}
+
+func (a *Agent) agentOptions() []AgentOption {
+	a.agentsMu.RLock()
+	defer a.agentsMu.RUnlock()
+	return slices.Clone(a.availableAgents)
+}
+
+func (a *Agent) defaultAgent() string {
+	a.agentsMu.RLock()
+	defer a.agentsMu.RUnlock()
+	return a.defaultAgentID
+}
+
+func (a *Agent) resolveAgentForStart(requestedAgentID string) (string, string, error) {
+	a.agentsMu.RLock()
+	defer a.agentsMu.RUnlock()
+
+	agentID := strings.TrimSpace(strings.ToLower(requestedAgentID))
+	if agentID == "" {
+		agentID = a.defaultAgentID
+	}
+
+	for _, option := range a.availableAgents {
+		if option.ID != agentID {
+			continue
+		}
+		if !option.Available {
+			return "", "", fmt.Errorf("agent %s is unavailable", option.Name)
+		}
+		return agentID, a.serviceByAgent[agentID], nil
+	}
+
+	return "", "", fmt.Errorf("unsupported agent: %s", requestedAgentID)
 }

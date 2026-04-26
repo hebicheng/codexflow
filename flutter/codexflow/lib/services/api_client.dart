@@ -46,6 +46,7 @@ class ApiClient {
   Future<SessionSummary> startSession({
     required String cwd,
     required String prompt,
+    required String agentId,
   }) async {
     final json = await _decodeMap(
       '/api/v1/sessions',
@@ -54,6 +55,7 @@ class ApiClient {
         'action': 'start',
         'cwd': cwd,
         'prompt': prompt,
+        'agent': agentId,
       },
       timeout: const Duration(seconds: 45),
     );

@@ -10,10 +10,28 @@ type AgentSnapshot struct {
 }
 
 type Dashboard struct {
-	Agent     AgentSnapshot        `json:"agent"`
-	Stats     DashboardStats       `json:"stats"`
-	Sessions  []SessionSummary     `json:"sessions"`
-	Approvals []PendingRequestView `json:"approvals"`
+	Agent        AgentSnapshot        `json:"agent"`
+	Agents       []AgentOption        `json:"agents"`
+	DefaultAgent string               `json:"defaultAgent"`
+	Stats        DashboardStats       `json:"stats"`
+	Sessions     []SessionSummary     `json:"sessions"`
+	Approvals    []PendingRequestView `json:"approvals"`
+}
+
+type AgentOption struct {
+	ID           string            `json:"id"`
+	Name         string            `json:"name"`
+	Available    bool              `json:"available"`
+	Default      bool              `json:"default"`
+	Capabilities AgentCapabilities `json:"capabilities"`
+}
+
+type AgentCapabilities struct {
+	SupportsInterruptTurn bool `json:"supportsInterruptTurn"`
+	SupportsApprovals     bool `json:"supportsApprovals"`
+	SupportsArchive       bool `json:"supportsArchive"`
+	SupportsResume        bool `json:"supportsResume"`
+	SupportsHistoryImport bool `json:"supportsHistoryImport"`
 }
 
 type DashboardStats struct {
@@ -24,24 +42,31 @@ type DashboardStats struct {
 }
 
 type SessionSummary struct {
-	ID               string   `json:"id"`
-	Name             string   `json:"name"`
-	Preview          string   `json:"preview"`
-	CWD              string   `json:"cwd"`
-	Source           string   `json:"source"`
-	Status           string   `json:"status"`
-	ActiveFlags      []string `json:"activeFlags"`
-	Loaded           bool     `json:"loaded"`
-	UpdatedAt        int64    `json:"updatedAt"`
-	CreatedAt        int64    `json:"createdAt"`
-	ModelProvider    string   `json:"modelProvider"`
-	Branch           string   `json:"branch"`
-	PendingApprovals int      `json:"pendingApprovals"`
-	LastTurnID       string   `json:"lastTurnId"`
-	LastTurnStatus   string   `json:"lastTurnStatus"`
-	AgentNickname    string   `json:"agentNickname"`
-	AgentRole        string   `json:"agentRole"`
-	Ended            bool     `json:"ended"`
+	ID                  string   `json:"id"`
+	AgentID             string   `json:"agentId"`
+	Name                string   `json:"name"`
+	Preview             string   `json:"preview"`
+	CWD                 string   `json:"cwd"`
+	Source              string   `json:"source"`
+	Status              string   `json:"status"`
+	ActiveFlags         []string `json:"activeFlags"`
+	Loaded              bool     `json:"loaded"`
+	UpdatedAt           int64    `json:"updatedAt"`
+	CreatedAt           int64    `json:"createdAt"`
+	ModelProvider       string   `json:"modelProvider"`
+	Branch              string   `json:"branch"`
+	PendingApprovals    int      `json:"pendingApprovals"`
+	LastTurnID          string   `json:"lastTurnId"`
+	LastTurnStatus      string   `json:"lastTurnStatus"`
+	AgentNickname       string   `json:"agentNickname"`
+	AgentRole           string   `json:"agentRole"`
+	LifecycleStage      string   `json:"lifecycleStage"`
+	HistoryAvailable    bool     `json:"historyAvailable"`
+	RuntimeAvailable    bool     `json:"runtimeAvailable"`
+	RuntimeAttachMode   string   `json:"runtimeAttachMode"`
+	ResumeAvailable     bool     `json:"resumeAvailable"`
+	ResumeBlockedReason string   `json:"resumeBlockedReason"`
+	Ended               bool     `json:"ended"`
 }
 
 type SessionDetail struct {

@@ -87,12 +87,16 @@ class UploadedImageRef {
 class DashboardResponse {
   DashboardResponse({
     required this.agent,
+    required this.agents,
+    required this.defaultAgent,
     required this.stats,
     required this.sessions,
     required this.approvals,
   });
 
   final AgentSnapshot agent;
+  final List<AgentOption> agents;
+  final String defaultAgent;
   final DashboardStats stats;
   final List<SessionSummary> sessions;
   final List<PendingRequestView> approvals;
@@ -100,6 +104,10 @@ class DashboardResponse {
   factory DashboardResponse.fromJson(Map<String, dynamic> json) {
     return DashboardResponse(
       agent: AgentSnapshot.fromJson(asMap(json['agent'])),
+      agents: asList(json['agents'])
+          .map((item) => AgentOption.fromJson(asMap(item)))
+          .toList(),
+      defaultAgent: asString(json['defaultAgent'], 'codex'),
       stats: DashboardStats.fromJson(asMap(json['stats'])),
       sessions: asList(json['sessions'])
           .map((item) => SessionSummary.fromJson(asMap(item)))
@@ -118,6 +126,35 @@ class DashboardResponse {
         listenAddr: '',
         codexBinaryPath: 'codex',
       ),
+      agents: <AgentOption>[
+        AgentOption(
+          id: 'codex',
+          name: 'Codex',
+          available: true,
+          isDefault: true,
+          capabilities: AgentCapabilities(
+            supportsInterruptTurn: true,
+            supportsApprovals: true,
+            supportsArchive: true,
+            supportsResume: true,
+            supportsHistoryImport: false,
+          ),
+        ),
+        AgentOption(
+          id: 'claude',
+          name: 'Claude Code',
+          available: false,
+          isDefault: false,
+          capabilities: AgentCapabilities(
+            supportsInterruptTurn: true,
+            supportsApprovals: true,
+            supportsArchive: true,
+            supportsResume: true,
+            supportsHistoryImport: true,
+          ),
+        ),
+      ],
+      defaultAgent: 'codex',
       stats: DashboardStats(
         totalSessions: 0,
         loadedSessions: 0,
@@ -126,6 +163,58 @@ class DashboardResponse {
       ),
       sessions: const <SessionSummary>[],
       approvals: const <PendingRequestView>[],
+    );
+  }
+}
+
+class AgentOption {
+  AgentOption({
+    required this.id,
+    required this.name,
+    required this.available,
+    required this.isDefault,
+    required this.capabilities,
+  });
+
+  final String id;
+  final String name;
+  final bool available;
+  final bool isDefault;
+  final AgentCapabilities capabilities;
+
+  factory AgentOption.fromJson(Map<String, dynamic> json) {
+    return AgentOption(
+      id: asString(json['id']),
+      name: asString(json['name']),
+      available: asBool(json['available']),
+      isDefault: asBool(json['default']),
+      capabilities: AgentCapabilities.fromJson(asMap(json['capabilities'])),
+    );
+  }
+}
+
+class AgentCapabilities {
+  AgentCapabilities({
+    required this.supportsInterruptTurn,
+    required this.supportsApprovals,
+    required this.supportsArchive,
+    required this.supportsResume,
+    required this.supportsHistoryImport,
+  });
+
+  final bool supportsInterruptTurn;
+  final bool supportsApprovals;
+  final bool supportsArchive;
+  final bool supportsResume;
+  final bool supportsHistoryImport;
+
+  factory AgentCapabilities.fromJson(Map<String, dynamic> json) {
+    return AgentCapabilities(
+      supportsInterruptTurn: asBool(json['supportsInterruptTurn']),
+      supportsApprovals: asBool(json['supportsApprovals']),
+      supportsArchive: asBool(json['supportsArchive']),
+      supportsResume: asBool(json['supportsResume']),
+      supportsHistoryImport: asBool(json['supportsHistoryImport']),
     );
   }
 }
@@ -179,6 +268,7 @@ class DashboardStats {
 class SessionSummary {
   SessionSummary({
     required this.id,
+    required this.agentId,
     required this.name,
     required this.preview,
     required this.cwd,
@@ -195,10 +285,17 @@ class SessionSummary {
     required this.lastTurnStatus,
     required this.agentNickname,
     required this.agentRole,
+    required this.lifecycleStage,
+    required this.historyAvailable,
+    required this.runtimeAvailable,
+    required this.runtimeAttachMode,
+    required this.resumeAvailable,
+    required this.resumeBlockedReason,
     required this.ended,
   });
 
   final String id;
+  final String agentId;
   final String name;
   final String preview;
   final String cwd;
@@ -215,11 +312,18 @@ class SessionSummary {
   final String lastTurnStatus;
   final String agentNickname;
   final String agentRole;
+  final String lifecycleStage;
+  final bool historyAvailable;
+  final bool runtimeAvailable;
+  final String runtimeAttachMode;
+  final bool resumeAvailable;
+  final String resumeBlockedReason;
   final bool ended;
 
   factory SessionSummary.fromJson(Map<String, dynamic> json) {
     return SessionSummary(
       id: asString(json['id']),
+      agentId: asString(json['agentId'], 'codex'),
       name: asString(json['name']),
       preview: asString(json['preview']),
       cwd: asString(json['cwd']),
@@ -237,6 +341,12 @@ class SessionSummary {
       lastTurnStatus: asString(json['lastTurnStatus']),
       agentNickname: asString(json['agentNickname']),
       agentRole: asString(json['agentRole']),
+      lifecycleStage: asString(json['lifecycleStage']),
+      historyAvailable: asBool(json['historyAvailable']),
+      runtimeAvailable: asBool(json['runtimeAvailable']),
+      runtimeAttachMode: asString(json['runtimeAttachMode']),
+      resumeAvailable: asBool(json['resumeAvailable'], true),
+      resumeBlockedReason: asString(json['resumeBlockedReason']),
       ended: asBool(json['ended']),
     );
   }
@@ -274,6 +384,16 @@ class SessionSummary {
   bool get isActive => status == 'active';
 
   bool get isEnded => ended;
+
+  bool get canResume => resumeAvailable;
+
+  bool get isClaudeSession => agentId == 'claude';
+
+  bool get isRuntimeDiscoverable => runtimeAvailable;
+
+  bool get isHistoryDiscoverable => historyAvailable;
+
+  bool get isManagedStage => lifecycleStage == 'managed';
 
   bool get hasWaitingState =>
       activeFlags.contains('waitingOnApproval') ||

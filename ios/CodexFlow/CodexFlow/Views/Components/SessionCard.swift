@@ -47,6 +47,13 @@ struct SessionCard<Actions: View>: View {
 
           ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
+              CapsuleTag(title: "托管", value: session.loaded ? "已接管" : "未接管")
+              if session.isClaudeSession {
+                CapsuleTag(title: "链路", value: session.runtimeAvailable ? "Runtime" : "History")
+                if session.loaded && !session.runtimeAttachMode.isEmpty {
+                  CapsuleTag(title: "接管", value: session.runtimeAttachMode == "resumed_existing" ? "现有 Runtime" : (session.runtimeAttachMode == "opened_from_history" ? "历史新开" : "新建 Runtime"))
+                }
+              }
               CapsuleTag(title: "来源", value: session.source)
               CapsuleTag(title: "分支", value: session.branch.isEmpty ? "未识别" : session.branch)
               if !session.lastTurnStatus.isEmpty {
@@ -93,6 +100,12 @@ struct SessionCard<Actions: View>: View {
   private var actionHint: String {
     if session.isEnded {
       return "这个会话已经在 CodexFlow 中结束。历史和 turn 会保留；如需继续，重新接管即可。"
+    }
+    if session.isClaudeSession && session.runtimeAvailable && !session.loaded {
+      return "Claude runtime 当前可见，但还没接到 CodexFlow。接管后才能继续刷新状态、处理中断和下一轮。"
+    }
+    if session.isClaudeSession && session.historyAvailable && !session.runtimeAvailable {
+      return "这是 Claude 历史导入会话。现在可以查看历史，但当前没有可接管 runtime。"
     }
     if session.pendingApprovals > 0 {
       return "有 \(session.pendingApprovals) 个审批等待处理，先去审批页处理。"

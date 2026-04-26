@@ -153,6 +153,19 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     final model = context.watch<AppModel>();
     final detail = _detail(model);
     final summary = _summary(model);
+    final capabilities = summary == null
+        ? AgentCapabilities(
+            supportsInterruptTurn: true,
+            supportsApprovals: true,
+            supportsArchive: true,
+            supportsResume: true,
+            supportsHistoryImport: false,
+          )
+        : model.capabilitiesForSession(summary);
+    final supportsApprovals = capabilities.supportsApprovals;
+    final supportsInterruptTurn = capabilities.supportsInterruptTurn;
+    final supportsResume =
+        summary == null ? capabilities.supportsResume : model.canResumeSession(summary);
     final orderedTurns = detail == null
         ? const <TurnDetail>[]
         : detail.turns.reversed.toList();
@@ -163,7 +176,8 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     final recentTurns = orderedTurns
         .where((turn) => turn.id != activeTurn?.id)
         .toList();
-    final sessionApprovals = _sessionApprovals(model);
+    final sessionApprovals =
+        supportsApprovals ? _sessionApprovals(model) : <PendingRequestView>[];
     final activeTurnApprovals = activeTurn == null
         ? const <PendingRequestView>[]
         : sessionApprovals
@@ -191,10 +205,38 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
           child: ListView(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
             children: <Widget>[
-              if (summary != null) ...<Widget>[
-                _SummaryCard(summary: summary),
+              if (model.operationNotice.isNotEmpty) ...<Widget>[
+                Container(
+                  width: double.infinity,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: (model.operationNoticeIsError
+                            ? Palette.danger
+                            : Palette.success)
+                        .appOpacity(0.08),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    model.operationNotice,
+                    style: roundedTextStyle(
+                      size: 12,
+                      weight: FontWeight.w500,
+                      color: model.operationNoticeIsError
+                          ? Palette.danger
+                          : Palette.success,
+                    ),
+                  ),
+                ),
                 const SizedBox(height: 12),
-                if (remainingSessionApprovals.isNotEmpty) ...<Widget>[
+              ],
+              if (summary != null) ...<Widget>[
+                _SummaryCard(
+                  summary: summary,
+                  supportsApprovals: supportsApprovals,
+                ),
+                const SizedBox(height: 12),
+                if (supportsApprovals && remainingSessionApprovals.isNotEmpty) ...<Widget>[
                   PanelCard(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -232,6 +274,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                 if (summary.isEnded || !summary.loaded)
                   _TakeoverCard(
                     summary: summary,
+                    supportsResume: supportsResume,
                     onPressed: () async {
                       await model.resumeSession(summary);
                       await _refreshSessionPage();
@@ -264,7 +307,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                         });
                       }
                     },
+                    supportsInterruptTurn: supportsInterruptTurn,
                     onInterrupt: summary.lastTurnStatus == 'inProgress'
+                            && supportsInterruptTurn
                         ? () async {
                             await model.interrupt(summary);
                           }
@@ -366,15 +411,19 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 }
 
 class _SummaryCard extends StatelessWidget {
-  const _SummaryCard({required this.summary});
+  const _SummaryCard({
+    required this.summary,
+    required this.supportsApprovals,
+  });
 
   final SessionSummary summary;
+  final bool supportsApprovals;
 
   @override
   Widget build(BuildContext context) {
     final stateTone = summary.isEnded
         ? Palette.mutedInk
-        : (summary.pendingApprovals > 0
+        : ((supportsApprovals && summary.pendingApprovals > 0)
               ? Palette.warning
               : (summary.loaded ? Palette.success : Palette.softBlue));
 
@@ -424,6 +473,29 @@ class _SummaryCard extends StatelessWidget {
             scrollDirection: Axis.horizontal,
             child: Row(
               children: <Widget>[
+                CapsuleTag(
+                  title: '托管',
+                  value: summary.loaded ? '已接管' : '未接管',
+                ),
+                if (summary.isClaudeSession) ...<Widget>[
+                  const SizedBox(width: 8),
+                  CapsuleTag(
+                    title: '链路',
+                    value: summary.runtimeAvailable ? 'Runtime' : 'History',
+                  ),
+                  if (summary.loaded && summary.runtimeAttachMode.isNotEmpty) ...<Widget>[
+                    const SizedBox(width: 8),
+                    CapsuleTag(
+                      title: '接管',
+                      value: summary.runtimeAttachMode == 'resumed_existing'
+                          ? '现有 Runtime'
+                          : (summary.runtimeAttachMode == 'opened_from_history'
+                              ? '历史新开'
+                              : '新建 Runtime'),
+                    ),
+                  ],
+                ],
+                const SizedBox(width: 8),
                 CapsuleTag(title: '来源', value: summary.source),
                 const SizedBox(width: 8),
                 CapsuleTag(
@@ -459,7 +531,7 @@ class _SummaryCard extends StatelessWidget {
               ),
             ),
           ],
-          if (summary.pendingApprovals > 0) ...<Widget>[
+          if (supportsApprovals && summary.pendingApprovals > 0) ...<Widget>[
             const SizedBox(height: 12),
             Text(
               '这个会话当前有 ${summary.pendingApprovals} 个审批等待处理，你可以直接在下面处理，也可以去“审批”页集中处理。',
@@ -513,6 +585,21 @@ class _SummaryCard extends StatelessWidget {
     if (summary.isEnded) {
       return '这个会话已经在 CodexFlow 中结束。历史和 turn 会保留，但不再由 CodexFlow 托管；如需继续，请重新接管。';
     }
+    if (summary.isClaudeSession &&
+        summary.loaded &&
+        summary.runtimeAttachMode == 'resumed_existing') {
+      return '当前这条 Claude 会话已经重新接入现有 runtime。你现在看到的是原 runtime 的继续态，可以直接开始下一轮或继续处理中断。';
+    }
+    if (summary.isClaudeSession &&
+        summary.loaded &&
+        summary.runtimeAttachMode == 'opened_from_history') {
+      return '当前这条 Claude 会话由 CodexFlow 新开 runtime 托管。历史 transcript 会继续保留显示，但后续运行状态来自这条新 runtime。';
+    }
+    if (summary.isClaudeSession &&
+        summary.loaded &&
+        summary.runtimeAttachMode == 'new_session') {
+      return '这是由 CodexFlow 新建的 Claude 会话。当前 runtime 和历史从一开始就是同一条链路。';
+    }
     if (!summary.loaded && summary.lastTurnStatus == 'inProgress') {
       return '这个会话当前还没被 CodexFlow 接管。现在只能查看历史；点下面“Resume 并接管会话”后，才可以继续 steer、处理中断和刷新运行状态。';
     }
@@ -527,9 +614,14 @@ class _SummaryCard extends StatelessWidget {
 }
 
 class _TakeoverCard extends StatelessWidget {
-  const _TakeoverCard({required this.summary, required this.onPressed});
+  const _TakeoverCard({
+    required this.summary,
+    required this.supportsResume,
+    required this.onPressed,
+  });
 
   final SessionSummary summary;
+  final bool supportsResume;
   final Future<void> Function() onPressed;
 
   @override
@@ -560,10 +652,16 @@ class _TakeoverCard extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           ActionButton(
-            title: summary.isEnded ? '重新接管会话' : 'Resume 并接管会话',
-            background: Palette.softBlue,
+            title: (!summary.isEnded &&
+                    summary.isClaudeSession &&
+                    !summary.runtimeAvailable)
+                ? '当前无 Runtime'
+                : (summary.isEnded ? '重新接管会话' : 'Resume 并接管会话'),
+            background:
+                supportsResume ? Palette.softBlue : Palette.mutedInk.appOpacity(0.35),
             foreground: Colors.white,
             fontSize: 14,
+            enabled: supportsResume,
             onPressed: () async => onPressed(),
           ),
         ],
@@ -574,6 +672,19 @@ class _TakeoverCard extends StatelessWidget {
   String _takeoverSummary(SessionSummary summary) {
     if (summary.isEnded) {
       return '这个会话已经在 CodexFlow 中结束了。历史记录仍然可看；如果你想继续发 prompt 或重新托管审批/状态刷新，先重新接管。';
+    }
+    if (summary.isClaudeSession &&
+        summary.runtimeAvailable &&
+        !summary.loaded) {
+      return '已经检测到 Claude live runtime。接入后，这个页面才会开始跟踪运行状态、处理中断，并允许继续下一轮。';
+    }
+    if (summary.isClaudeSession &&
+        summary.historyAvailable &&
+        !summary.runtimeAvailable) {
+      return '这是 Claude 历史导入记录。当前可以查看历史，但本机没有发现对应 live runtime。';
+    }
+    if (!summary.canResume && summary.resumeBlockedReason.isNotEmpty) {
+      return summary.resumeBlockedReason;
     }
     if (summary.lastTurnStatus == 'inProgress') {
       return '这个会话可能仍在别处运行，但当前不在 CodexFlow 里托管。先接管后，CodexFlow 才能继续刷新状态、处理审批，并允许你继续 steer 或中断。';
@@ -605,6 +716,7 @@ class _ComposerCard extends StatelessWidget {
     required this.onPickImage,
     required this.onRemoveAttachment,
     required this.onSubmit,
+    required this.supportsInterruptTurn,
     required this.onInterrupt,
     required this.onEnd,
   });
@@ -616,6 +728,7 @@ class _ComposerCard extends StatelessWidget {
   final Future<void> Function() onPickImage;
   final void Function(String id) onRemoveAttachment;
   final Future<void> Function() onSubmit;
+  final bool supportsInterruptTurn;
   final Future<void> Function()? onInterrupt;
   final Future<void> Function() onEnd;
 
@@ -825,7 +938,18 @@ class _ComposerCard extends StatelessWidget {
                     FocusScope.of(context).unfocus();
                     await onEnd();
                   },
+                  ),
+              if (isSteering && !supportsInterruptTurn) ...<Widget>[
+                const SizedBox(height: 8),
+                Text(
+                  '当前 Agent 不支持本轮中断，将等待本轮自然结束。',
+                  style: roundedTextStyle(
+                    size: 12,
+                    weight: FontWeight.w500,
+                    color: Palette.mutedInk,
+                  ),
                 ),
+              ],
             ],
           ),
         );
@@ -1624,6 +1748,10 @@ class TimelineEntryView extends StatelessWidget {
             FileChangeBlock(item: item)
           else if (item.type == 'commandExecution')
             CommandExecutionBlock(item: item)
+          else if (item.type == 'dynamicToolCall')
+            ToolCallBlock(item: item)
+          else if (item.type == 'collabAgentToolCall')
+            DelegationBlock(item: item)
           else ...<Widget>[
             if (bodyPreview.isNotEmpty)
               Text(
@@ -1679,6 +1807,10 @@ class TimelineTypeTag extends StatelessWidget {
         return 'Agent';
       case 'fileChange':
         return '文件变更';
+      case 'dynamicToolCall':
+        return '工具调用';
+      case 'collabAgentToolCall':
+        return '委托';
       default:
         return item.title;
     }
@@ -1694,9 +1826,108 @@ class TimelineTypeTag extends StatelessWidget {
         return Palette.accent2;
       case 'commandExecution':
         return Palette.warning;
+      case 'dynamicToolCall':
+        return Palette.softBlue;
+      case 'collabAgentToolCall':
+        return Palette.warning;
       default:
         return Palette.mutedInk;
     }
+  }
+}
+
+class ToolCallBlock extends StatelessWidget {
+  const ToolCallBlock({super.key, required this.item});
+
+  final TurnItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    final tool = item.metadata['tool'] ?? '';
+    final progress = item.metadata['progress'] ?? '';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        if (tool.isNotEmpty)
+          Text(
+            tool,
+            style: roundedTextStyle(
+              size: 12,
+              weight: FontWeight.w500,
+              color: Palette.ink,
+              fontFamily: 'monospace',
+            ),
+          ),
+        if (tool.isNotEmpty && item.body.isNotEmpty) const SizedBox(height: 6),
+        if (item.body.isNotEmpty)
+          Text(
+            item.body,
+            style: roundedTextStyle(
+              size: 12,
+              weight: FontWeight.w500,
+              color: Palette.mutedInk,
+              height: 1.45,
+            ),
+          ),
+        if (progress.isNotEmpty) ...<Widget>[
+          const SizedBox(height: 6),
+          Text(
+            '进行中：$progress',
+            style: roundedTextStyle(
+              size: 11,
+              weight: FontWeight.w600,
+              color: Palette.softBlue,
+            ),
+          ),
+        ],
+        if (item.auxiliary.isNotEmpty) ...<Widget>[
+          const SizedBox(height: 8),
+          TerminalOutputBlock(text: item.auxiliary, maxVisibleLines: 10),
+        ],
+      ],
+    );
+  }
+}
+
+class DelegationBlock extends StatelessWidget {
+  const DelegationBlock({super.key, required this.item});
+
+  final TurnItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    final title = item.metadata['title'] ?? '';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        if (title.isNotEmpty)
+          Text(
+            title,
+            style: roundedTextStyle(
+              size: 12,
+              weight: FontWeight.w600,
+              color: Palette.ink,
+            ),
+          ),
+        if (title.isNotEmpty && item.body.isNotEmpty) const SizedBox(height: 6),
+        if (item.body.isNotEmpty)
+          HeadTailExcerptBlock(
+            raw: item.body,
+            head: 170,
+            tail: 110,
+            style: roundedTextStyle(
+              size: 12,
+              weight: FontWeight.w500,
+              color: Palette.mutedInk,
+              height: 1.45,
+            ),
+          ),
+        if (item.auxiliary.isNotEmpty) ...<Widget>[
+          const SizedBox(height: 8),
+          TerminalOutputBlock(text: item.auxiliary, maxVisibleLines: 10),
+        ],
+      ],
+    );
   }
 }
 

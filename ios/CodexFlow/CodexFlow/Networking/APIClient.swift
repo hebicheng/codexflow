@@ -55,14 +55,15 @@ struct APIClient {
     ])
   }
 
-  func startSession(cwd: String, prompt: String) async throws -> SessionSummary {
+  func startSession(cwd: String, prompt: String, agent: String) async throws -> SessionSummary {
     try await decode(
       path: "/api/v1/sessions",
       method: "POST",
       body: [
         "action": "start",
         "cwd": cwd,
-        "prompt": prompt
+        "prompt": prompt,
+        "agent": agent
       ],
       timeoutInterval: 45
     )

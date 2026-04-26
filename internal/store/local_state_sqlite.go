@@ -17,8 +17,10 @@ type LocalStateDB struct {
 }
 
 type PersistedSessionState struct {
-	Ended   bool
-	Managed bool
+	Ended          bool
+	Managed        bool
+	AgentID        string
+	AgentSessionID string
 }
 
 func OpenLocalStateDB(path string) (*LocalStateDB, error) {
@@ -47,12 +49,22 @@ CREATE TABLE IF NOT EXISTS session_local_state (
 	thread_id TEXT PRIMARY KEY,
 	ended INTEGER NOT NULL DEFAULT 1,
 	managed INTEGER NOT NULL DEFAULT 0,
+	agent_id TEXT NOT NULL DEFAULT '',
+	agent_session_id TEXT NOT NULL DEFAULT '',
 	updated_at INTEGER NOT NULL DEFAULT (unixepoch())
 );`); err != nil {
 		_ = rawDB.Close()
 		return nil, err
 	}
 	if err := db.addColumnIfMissing("ALTER TABLE session_local_state ADD COLUMN managed INTEGER NOT NULL DEFAULT 0;"); err != nil {
+		_ = rawDB.Close()
+		return nil, err
+	}
+	if err := db.addColumnIfMissing("ALTER TABLE session_local_state ADD COLUMN agent_id TEXT NOT NULL DEFAULT '';"); err != nil {
+		_ = rawDB.Close()
+		return nil, err
+	}
+	if err := db.addColumnIfMissing("ALTER TABLE session_local_state ADD COLUMN agent_session_id TEXT NOT NULL DEFAULT '';"); err != nil {
 		_ = rawDB.Close()
 		return nil, err
 	}
@@ -68,7 +80,7 @@ func (db *LocalStateDB) LoadSessionStates() (map[string]PersistedSessionState, e
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	rows, err := db.db.QueryContext(ctx, "SELECT thread_id, ended, managed FROM session_local_state;")
+	rows, err := db.db.QueryContext(ctx, "SELECT thread_id, ended, managed, agent_id, agent_session_id FROM session_local_state;")
 	if err != nil {
 		return nil, fmt.Errorf("query session local state: %w", err)
 	}
@@ -79,7 +91,9 @@ func (db *LocalStateDB) LoadSessionStates() (map[string]PersistedSessionState, e
 		var threadID string
 		var ended int
 		var managed int
-		if err := rows.Scan(&threadID, &ended, &managed); err != nil {
+		var agentID string
+		var agentSessionID string
+		if err := rows.Scan(&threadID, &ended, &managed, &agentID, &agentSessionID); err != nil {
 			return nil, fmt.Errorf("scan session local state row: %w", err)
 		}
 		threadID = strings.TrimSpace(threadID)
@@ -87,8 +101,10 @@ func (db *LocalStateDB) LoadSessionStates() (map[string]PersistedSessionState, e
 			continue
 		}
 		result[threadID] = PersistedSessionState{
-			Ended:   ended != 0,
-			Managed: managed != 0,
+			Ended:          ended != 0,
+			Managed:        managed != 0,
+			AgentID:        strings.TrimSpace(agentID),
+			AgentSessionID: strings.TrimSpace(agentSessionID),
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -103,7 +119,7 @@ func (db *LocalStateDB) SaveSessionState(threadID string, state PersistedSession
 		return nil
 	}
 
-	if !state.Ended && !state.Managed {
+	if !state.Ended && !state.Managed && strings.TrimSpace(state.AgentID) == "" && strings.TrimSpace(state.AgentSessionID) == "" {
 		return db.exec(fmt.Sprintf(
 			"DELETE FROM session_local_state WHERE thread_id = %s;",
 			sqlString(threadID),
@@ -111,15 +127,19 @@ func (db *LocalStateDB) SaveSessionState(threadID string, state PersistedSession
 	}
 
 	return db.exec(fmt.Sprintf(`
-INSERT INTO session_local_state (thread_id, ended, managed, updated_at)
-VALUES (%s, %d, %d, unixepoch())
+INSERT INTO session_local_state (thread_id, ended, managed, agent_id, agent_session_id, updated_at)
+VALUES (%s, %d, %d, %s, %s, unixepoch())
 ON CONFLICT(thread_id) DO UPDATE SET
 	ended = excluded.ended,
 	managed = excluded.managed,
+	agent_id = excluded.agent_id,
+	agent_session_id = excluded.agent_session_id,
 	updated_at = unixepoch();`,
 		sqlString(threadID),
 		boolToInt(state.Ended),
 		boolToInt(state.Managed),
+		sqlString(strings.TrimSpace(state.AgentID)),
+		sqlString(strings.TrimSpace(state.AgentSessionID)),
 	))
 }
 

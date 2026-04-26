@@ -42,3 +42,7 @@ Planned later:
 - `stdio` avoids an extra websocket dependency inside the local agent
 - the agent becomes the single place that can later add policy, relay, push, and audit
 - iOS works against a stable app-specific API instead of speaking raw Codex protocol directly
+
+## Related Design Docs
+
+- [Session Lifecycle](./session-lifecycle.md)
