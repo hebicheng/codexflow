@@ -18,6 +18,8 @@ AGENT_PORT="${AGENT_LISTEN_ADDR##*:}"
 WEB_HOST="${CODEXFLOW_WEB_HOST:-0.0.0.0}"
 WEB_PORT="${CODEXFLOW_WEB_PORT:-8080}"
 WEB_DIR="$ROOT_DIR/flutter/codexflow/build/web"
+FLUTTER_BIN="${CODEXFLOW_FLUTTER_BIN:-}"
+PUBLIC_HOST=""
 
 usage() {
   cat <<EOF
@@ -107,8 +109,27 @@ wait_for_url() {
   echo "      查看日志：$log_file"
 }
 
+detect_flutter() {
+  if [[ -n "$FLUTTER_BIN" && -x "$FLUTTER_BIN" ]]; then
+    return 0
+  fi
+
+  FLUTTER_BIN="$(command -v flutter 2>/dev/null || true)"
+  if [[ -n "$FLUTTER_BIN" ]]; then
+    return 0
+  fi
+
+  if [[ -x "$HOME/development/flutter/bin/flutter" ]]; then
+    FLUTTER_BIN="$HOME/development/flutter/bin/flutter"
+    return 0
+  fi
+
+  return 1
+}
+
 start_agent() {
   ensure_runtime_dir
+  PUBLIC_HOST="$(detect_public_host)"
 
   if is_pid_running "$AGENT_PID_FILE"; then
     echo "Agent 已在后台运行，PID $(cat "$AGENT_PID_FILE")"
@@ -133,6 +154,7 @@ start_agent() {
   (
     cd "$ROOT_DIR"
     export CODEXFLOW_LISTEN_ADDR="$AGENT_LISTEN_ADDR"
+    export CODEXFLOW_ALLOWED_ORIGINS="${CODEXFLOW_ALLOWED_ORIGINS:-*}"
     nohup "$AGENT_BIN" >"$AGENT_LOG" 2>&1 </dev/null &
     echo "$!" >"$AGENT_PID_FILE"
   )
@@ -153,14 +175,14 @@ build_web_if_needed() {
     return 0
   fi
 
-  if ! command -v flutter >/dev/null 2>&1; then
+  if ! detect_flutter; then
     echo "WARN: 未找到 Flutter，且 $WEB_DIR/index.html 不存在，跳过 Web 前端启动。"
     echo "      安装 Flutter 后重新运行本脚本，或先在 flutter/codexflow 下执行 flutter build web --release。"
     return 1
   fi
 
   echo "构建 Flutter Web..."
-  (cd "$ROOT_DIR/flutter/codexflow" && flutter build web --release)
+  (cd "$ROOT_DIR/flutter/codexflow" && "$FLUTTER_BIN" build web --release)
 }
 
 start_web() {
@@ -203,7 +225,7 @@ start_web() {
 
 print_addresses() {
   local public_host
-  public_host="$(detect_public_host)"
+  public_host="${PUBLIC_HOST:-$(detect_public_host)}"
 
   cat <<EOF
 
