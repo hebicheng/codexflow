@@ -147,6 +147,20 @@ Client Apps
 
 ### 2. 启动 Go Agent
 
+如果你希望在本机后台一次性启动 Agent 和 Web 前端，可以直接运行：
+
+```bash
+./scripts/codexflow-local.sh start
+```
+
+脚本会回显 iPhone App 里要填写的 Agent 地址、Safari 可打开的 Web 地址，以及停止命令。停止后台服务：
+
+```bash
+./scripts/codexflow-local.sh stop
+```
+
+如果只想手动启动 Agent，可以继续使用下面的方式。
+
 在仓库根目录执行：
 
 ```bash
