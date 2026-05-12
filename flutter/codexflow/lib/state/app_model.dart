@@ -40,8 +40,7 @@ class ApprovalAction {
 
 class AppModel extends ChangeNotifier {
   AppModel(this._prefs)
-      : baseUrlString =
-            _prefs.getString(_baseUrlKey) ?? 'http://127.0.0.1:4318';
+      : baseUrlString = _prefs.getString(_baseUrlKey) ?? '';
 
   static const _baseUrlKey = 'codexflow.baseURL';
 
